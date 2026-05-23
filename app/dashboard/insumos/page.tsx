@@ -1,4 +1,5 @@
-import { AlertOctagon, PackageSearch } from "lucide-react";
+import Link from "next/link";
+import { AlertOctagon, ArrowUpRight, PackageSearch, Upload } from "lucide-react";
 import { Topbar } from "@/components/dashboard/Topbar";
 import {
   AvailabilityBadge,
@@ -6,7 +7,7 @@ import {
   SupplyTypeBadge,
 } from "@/components/dashboard/SupplyBadges";
 import { getAllSupplies } from "@/lib/dashboard-data";
-import { fmtCOP, fmtCOPCompact, fmtNumber } from "@/lib/format";
+import { fmtCOP, fmtCOPCompact, fmtDate, fmtNumber, fmtPercent } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ export default async function InsumosPage() {
     <>
       <Topbar
         title="Insumos críticos"
-        subtitle="Catálogo, exposición presupuestal y disponibilidad. La criticidad determina el flujo de compras."
+        subtitle="Catálogo, exposición presupuestal, disponibilidad y variación de precios de mercado."
       />
 
       <div className="space-y-8 px-5 py-8 sm:px-8">
@@ -57,14 +58,24 @@ export default async function InsumosPage() {
                 líneas en órdenes de compra.
               </p>
             </div>
-            <PackageSearch
-              aria-hidden="true"
-              className="hidden h-5 w-5 text-ink-soft sm:block"
-            />
+            <div className="flex items-center gap-2">
+              <Link
+                href="/dashboard/insumos/precios"
+                className="inline-flex items-center gap-1 rounded-full border border-line bg-canvas px-3 py-1.5 text-[11px] font-medium text-ink hover:border-ink/25"
+              >
+                <Upload className="h-3 w-3" aria-hidden="true" />
+                Cargar precios
+                <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
+              </Link>
+              <PackageSearch
+                aria-hidden="true"
+                className="hidden h-5 w-5 text-ink-soft sm:block"
+              />
+            </div>
           </header>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] text-left text-sm">
+            <table className="w-full min-w-[980px] text-left text-sm">
               <thead>
                 <tr className="border-b border-line text-[11px] font-medium uppercase tracking-[0.12em] text-ink-soft">
                   <th scope="col" className="px-5 py-3">Insumo</th>
@@ -72,6 +83,8 @@ export default async function InsumosPage() {
                   <th scope="col" className="px-5 py-3">Criticidad</th>
                   <th scope="col" className="px-5 py-3">Disponibilidad</th>
                   <th scope="col" className="px-5 py-3 text-right">Precio ref.</th>
+                  <th scope="col" className="px-5 py-3 text-right">Precio mercado</th>
+                  <th scope="col" className="px-5 py-3 text-right">Variación</th>
                   <th scope="col" className="px-5 py-3 text-right">Exposición</th>
                   <th scope="col" className="px-5 py-3 text-right">Ejec. / plan.</th>
                   <th scope="col" className="px-5 py-3 text-right">OC pendientes</th>
@@ -117,6 +130,29 @@ export default async function InsumosPage() {
                       </td>
                       <td className="px-5 py-4 text-right font-mono text-ink">
                         {fmtCOP(s.precio_referencia)}
+                      </td>
+                      <td className="px-5 py-4 text-right font-mono text-ink">
+                        {fmtCOP(s.precio_actual)}
+                        <p className="text-[11px] font-sans text-ink-soft">
+                          {s.fecha_precio_actualizacion
+                            ? fmtDate(s.fecha_precio_actualizacion)
+                            : "Sin carga"}
+                        </p>
+                      </td>
+                      <td className="px-5 py-4 text-right">
+                        <span
+                          className={`rounded-full px-2 py-1 text-[11px] font-medium ${
+                            s.variacion_precio_pct >= 10
+                              ? "bg-status-risk/10 text-status-risk"
+                              : s.variacion_precio_pct >= 5
+                                ? "bg-status-warn/10 text-status-warn"
+                                : s.variacion_precio_pct > 0
+                                  ? "bg-status-ok/10 text-status-ok"
+                                  : "bg-ink/5 text-ink-soft"
+                          }`}
+                        >
+                          {fmtPercent(s.variacion_precio_pct, { decimals: 1 })}
+                        </span>
                       </td>
                       <td className="px-5 py-4 text-right font-mono text-ink">
                         {fmtCOPCompact(s.exposicion_presupuestal)}

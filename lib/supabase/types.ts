@@ -227,6 +227,41 @@ export type Database = {
         Update: Record<string, unknown>;
         Relationships: [];
       };
+      supply_price_update_batches: {
+        Row: {
+          created_at: string;
+          id: string;
+          notes: string | null;
+          observed_at: string;
+          source_channel: string;
+          source_file_name: string;
+          updated_at: string;
+          uploaded_by: string | null;
+        };
+        Insert: Record<string, unknown>;
+        Update: Record<string, unknown>;
+        Relationships: [];
+      };
+      supply_price_update_rows: {
+        Row: {
+          batch_id: string;
+          created_at: string;
+          currency: string;
+          id: string;
+          line_number: number;
+          notes: string | null;
+          source_supply_id: string | null;
+          source_supply_name: string;
+          source_unit: string | null;
+          status: string;
+          supply_id: string | null;
+          unit_price: number;
+          updated_at: string;
+        };
+        Insert: Record<string, unknown>;
+        Update: Record<string, unknown>;
+        Relationships: [];
+      };
       payroll_periods: {
         Row: {
           created_at: string;

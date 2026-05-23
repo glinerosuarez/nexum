@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   PackageSearch,
+  Upload,
   Wallet,
   type LucideIcon,
 } from "lucide-react";
@@ -21,6 +22,12 @@ const items: { href: string; label: string; icon: LucideIcon; description: strin
     label: "Insumos críticos",
     icon: PackageSearch,
     description: "Catálogo y disponibilidad",
+  },
+  {
+    href: "/dashboard/insumos/precios",
+    label: "Carga de precios",
+    icon: Upload,
+    description: "ETL y monitoreo",
   },
   {
     href: "/dashboard/costos",
