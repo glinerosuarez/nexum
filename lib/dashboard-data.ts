@@ -79,6 +79,24 @@ export interface DashboardData {
   topCriticalSupplies: SupplyRow[];
 }
 
+export interface ProjectListRow {
+  id: string;
+  nombre: string;
+  descripcion: string | null;
+  ubicacion: string | null;
+  estado: string;
+  fecha_inicio_planeada: string | null;
+  fecha_fin_planeada: string | null;
+  fecha_inicio_real: string | null;
+  presupuesto_total: number;
+  gasto_ejecutado: number;
+  avance: number;
+  spi: number | null;
+  cpi: number | null;
+  incidentes_abiertos: number;
+  created_at: string;
+}
+
 interface SupplyAggregations {
   exposicionPorSupply: Map<string, number>;
   cantidadPlaneada: Map<string, number>;
@@ -201,15 +219,16 @@ async function getSupplyAggregations(): Promise<SupplyAggregations> {
   };
 }
 
-export async function getDashboardData(): Promise<DashboardData> {
+export async function getDashboardData(projectId?: string): Promise<DashboardData> {
   const supabase = await createSupabaseServerClient();
 
-  const { data: projectRow } = await supabase
+  const projectQuery = supabase
     .from("management_report_data")
-    .select("*")
-    .order("project_nombre", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .select("*");
+  if (projectId) projectQuery.eq("project_id", projectId);
+  else projectQuery.order("project_nombre", { ascending: true });
+
+  const { data: projectRow } = await projectQuery.limit(1).maybeSingle();
 
   let project: ProjectSummary | null = null;
   if (projectRow && projectRow.project_id && projectRow.project_nombre) {
@@ -425,15 +444,16 @@ export interface CostsData {
   gastoPorCategoria: { categoria: string; monto: number }[];
 }
 
-export async function getCostsData(): Promise<CostsData> {
+export async function getCostsData(projectId?: string): Promise<CostsData> {
   const supabase = await createSupabaseServerClient();
 
-  const { data: projectRow } = await supabase
+  const projectQuery = supabase
     .from("management_report_data")
-    .select("*")
-    .order("project_nombre", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .select("*");
+  if (projectId) projectQuery.eq("project_id", projectId);
+  else projectQuery.order("project_nombre", { ascending: true });
+
+  const { data: projectRow } = await projectQuery.limit(1).maybeSingle();
 
   let project: ProjectSummary | null = null;
   if (projectRow && projectRow.project_id && projectRow.project_nombre) {
@@ -454,12 +474,14 @@ export async function getCostsData(): Promise<CostsData> {
     };
   }
 
-  const { data: phaseRows } = await supabase
+  const phasesQuery = supabase
     .from("project_phases")
     .select(
       "id, nombre, project_id, activities(id, progress_percentage, activity_supplies(subtotal, cantidad_planeada, cantidad_ejecutada, precio_unitario))",
     )
     .order("sort_order", { ascending: true });
+  if (project?.id) phasesQuery.eq("project_id", project.id);
+  const { data: phaseRows } = await phasesQuery;
 
   type SupplyMini = {
     subtotal: number | string | null;
@@ -511,12 +533,14 @@ export async function getCostsData(): Promise<CostsData> {
     },
   );
 
-  const { data: poRows } = await supabase
+  const poQuery = supabase
     .from("purchase_orders")
     .select(
       "id, order_number, estado, fecha_emision, fecha_entrega_esperada, suppliers(nombre), purchase_order_items(subtotal, cantidad, precio_unitario, es_prioritario), supplier_payments(monto, estado)",
     )
     .order("fecha_emision", { ascending: false });
+  if (project?.id) poQuery.eq("project_id", project.id);
+  const { data: poRows } = await poQuery;
 
   type POSubItem = {
     subtotal: number | string | null;
@@ -628,4 +652,48 @@ export async function getProfileInfo(userId: string) {
     .eq("id", userId)
     .maybeSingle();
   return data;
+}
+
+export async function listProjects(): Promise<ProjectListRow[]> {
+  const supabase = await createSupabaseServerClient();
+
+  const { data: projects } = await supabase
+    .from("projects")
+    .select(
+      "id, nombre, descripcion, ubicacion, estado, fecha_inicio_planeada, fecha_fin_planeada, fecha_inicio_real, presupuesto_total, created_at",
+    )
+    .order("created_at", { ascending: false });
+
+  const { data: reportRows } = await supabase
+    .from("management_report_data")
+    .select(
+      "project_id, gasto_ejecutado, avance_global_percent, spi_basico, cpi_basico, incidentes_abiertos, presupuesto_total",
+    );
+
+  const reportByProject = new Map<string, typeof reportRows extends (infer T)[] | null ? T : never>();
+  for (const r of reportRows ?? []) {
+    if (r.project_id) reportByProject.set(r.project_id, r);
+  }
+
+  return (projects ?? []).map((p) => {
+    const report = reportByProject.get(p.id);
+    return {
+      id: p.id,
+      nombre: p.nombre,
+      descripcion: p.descripcion,
+      ubicacion: p.ubicacion,
+      estado: p.estado,
+      fecha_inicio_planeada: p.fecha_inicio_planeada,
+      fecha_fin_planeada: p.fecha_fin_planeada,
+      fecha_inicio_real: p.fecha_inicio_real,
+      presupuesto_total:
+        toNumber(report?.presupuesto_total) || toNumber(p.presupuesto_total),
+      gasto_ejecutado: toNumber(report?.gasto_ejecutado),
+      avance: toNumber(report?.avance_global_percent),
+      spi: report?.spi_basico != null ? toNumber(report.spi_basico) : null,
+      cpi: report?.cpi_basico != null ? toNumber(report.cpi_basico) : null,
+      incidentes_abiertos: toNumber(report?.incidentes_abiertos, 0),
+      created_at: p.created_at,
+    };
+  });
 }

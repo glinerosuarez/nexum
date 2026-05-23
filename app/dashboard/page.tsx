@@ -20,8 +20,13 @@ import { fmtCOP, fmtCOPCompact, fmtDate, fmtNumber, fmtPercent } from "@/lib/for
 
 export const dynamic = "force-dynamic";
 
-export default async function DashboardPage() {
-  const data = await getDashboardData();
+interface DashboardPageProps {
+  searchParams: Promise<{ project?: string }>;
+}
+
+export default async function DashboardPage({ searchParams }: DashboardPageProps) {
+  const { project: projectId } = await searchParams;
+  const data = await getDashboardData(projectId);
   const { project, totals, alerts, topCriticalSupplies } = data;
 
   const cpiTone = project?.cpi == null ? "neutral" : project.cpi >= 1 ? "ok" : project.cpi >= 0.9 ? "warn" : "risk";

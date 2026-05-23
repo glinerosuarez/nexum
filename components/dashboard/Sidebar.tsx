@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  FolderKanban,
   LayoutDashboard,
   PackageSearch,
   Wallet,
@@ -10,6 +11,12 @@ import {
 } from "lucide-react";
 
 const items: { href: string; label: string; icon: LucideIcon; description: string }[] = [
+  {
+    href: "/dashboard/proyectos",
+    label: "Proyectos",
+    icon: FolderKanban,
+    description: "Listado y creación",
+  },
   {
     href: "/dashboard",
     label: "Vista ejecutiva",
