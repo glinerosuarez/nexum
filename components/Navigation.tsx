@@ -81,7 +81,7 @@ export function Navigation() {
           </ul>
 
           <div className="hidden items-center gap-2 lg:flex">
-            <Button href="#contacto" variant="ghost" size="sm">
+            <Button href="/login" variant="ghost" size="sm">
               Iniciar sesión
             </Button>
             <Button href="#contacto" size="sm" withArrow>
@@ -120,7 +120,7 @@ export function Navigation() {
               ))}
             </ul>
             <div className="mt-4 flex flex-col gap-2">
-              <Button href="#contacto" variant="secondary" size="md">
+              <Button href="/login" variant="secondary" size="md">
                 Iniciar sesión
               </Button>
               <Button href="#contacto" size="md" withArrow>
