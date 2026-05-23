@@ -737,6 +737,70 @@ export async function getRecentPriceBatches(limit = 12): Promise<PriceBatchListR
   });
 }
 
+export interface AgentOverrunSnapshot {
+  project_id: string;
+  project_nombre: string;
+  last_run_id: string | null;
+  last_run_mode: string | null;
+  last_run_status: string | null;
+  last_run_started_at: string | null;
+  last_run_finished_at: string | null;
+  supplies_targeted: number;
+  supplies_scraped_ok: number;
+  supplies_scraped_failed: number;
+  forecast_points_written: number;
+  alerts_triggered: number;
+  error_summary: string | null;
+  last_alert_id: string | null;
+  last_alert_severity: string | null;
+  last_alert_status: string | null;
+  last_alert_triggered_at: string | null;
+  baseline_budget: number;
+  projected_total_cost: number;
+  overrun_amount: number;
+  overrun_pct: number;
+  threshold_pct: number;
+}
+
+export async function getAgentOverrunSnapshot(
+  projectId: string,
+): Promise<AgentOverrunSnapshot | null> {
+  const supabase = await createSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from("agent_overrun_snapshot")
+    .select("*")
+    .eq("project_id", projectId)
+    .maybeSingle();
+
+  if (error || !data || !data.project_id || !data.project_nombre) return null;
+
+  return {
+    project_id: data.project_id,
+    project_nombre: data.project_nombre,
+    last_run_id: data.last_run_id,
+    last_run_mode: data.last_run_mode,
+    last_run_status: data.last_run_status,
+    last_run_started_at: data.last_run_started_at,
+    last_run_finished_at: data.last_run_finished_at,
+    supplies_targeted: toNumber(data.supplies_targeted, 0),
+    supplies_scraped_ok: toNumber(data.supplies_scraped_ok, 0),
+    supplies_scraped_failed: toNumber(data.supplies_scraped_failed, 0),
+    forecast_points_written: toNumber(data.forecast_points_written, 0),
+    alerts_triggered: toNumber(data.alerts_triggered, 0),
+    error_summary: data.error_summary,
+    last_alert_id: data.last_alert_id,
+    last_alert_severity: data.last_alert_severity,
+    last_alert_status: data.last_alert_status,
+    last_alert_triggered_at: data.last_alert_triggered_at,
+    baseline_budget: toNumber(data.baseline_budget, 0),
+    projected_total_cost: toNumber(data.projected_total_cost, 0),
+    overrun_amount: toNumber(data.overrun_amount, 0),
+    overrun_pct: toNumber(data.overrun_pct, 0),
+    threshold_pct: toNumber(data.threshold_pct, 0),
+  };
+}
+
 export interface CostsData {
   project: ProjectSummary | null;
   budgetByPhase: BudgetByPhase[];

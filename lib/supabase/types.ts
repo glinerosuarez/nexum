@@ -267,6 +267,105 @@ export type Database = {
         Update: Record<string, unknown>;
         Relationships: [];
       };
+      supply_price_sources: {
+        Row: {
+          created_at: string;
+          id: string;
+          is_active: boolean;
+          last_error: string | null;
+          last_success_at: string | null;
+          parse_config: Json;
+          priority: number;
+          source_name: string;
+          source_url: string;
+          supply_id: string;
+          updated_at: string;
+        };
+        Insert: Record<string, unknown>;
+        Update: Record<string, unknown>;
+        Relationships: [];
+      };
+      supply_agent_runs: {
+        Row: {
+          alerts_triggered: number;
+          created_at: string;
+          error_summary: string | null;
+          finished_at: string | null;
+          forecast_points_written: number;
+          id: string;
+          metadata: Json;
+          mode: string;
+          project_id: string;
+          started_at: string;
+          status: string;
+          supplies_scraped_failed: number;
+          supplies_scraped_ok: number;
+          supplies_targeted: number;
+          updated_at: string;
+        };
+        Insert: Record<string, unknown>;
+        Update: Record<string, unknown>;
+        Relationships: [];
+      };
+      supply_price_observations: {
+        Row: {
+          agent_run_id: string | null;
+          confidence: number | null;
+          created_at: string;
+          currency: string;
+          id: string;
+          observed_at: string;
+          observed_ts: string;
+          project_id: string;
+          raw_payload: Json | null;
+          source_id: string | null;
+          supply_id: string;
+          unit_price: number;
+          updated_at: string;
+        };
+        Insert: Record<string, unknown>;
+        Update: Record<string, unknown>;
+        Relationships: [];
+      };
+      supply_cost_forecasts: {
+        Row: {
+          created_at: string;
+          forecast_date: string;
+          id: string;
+          metadata: Json;
+          model_version: string;
+          predicted_unit_price: number;
+          project_id: string;
+          run_id: string | null;
+          supply_id: string;
+          updated_at: string;
+        };
+        Insert: Record<string, unknown>;
+        Update: Record<string, unknown>;
+        Relationships: [];
+      };
+      supply_cost_overrun_alerts: {
+        Row: {
+          baseline_budget: number;
+          created_at: string;
+          id: string;
+          metadata: Json;
+          overrun_amount: number;
+          overrun_pct: number;
+          projected_total_cost: number;
+          project_id: string;
+          resolved_at: string | null;
+          run_id: string | null;
+          severity: string;
+          status: string;
+          threshold_pct: number;
+          triggered_at: string;
+          updated_at: string;
+        };
+        Insert: Record<string, unknown>;
+        Update: Record<string, unknown>;
+        Relationships: [];
+      };
       payroll_periods: {
         Row: {
           created_at: string;
@@ -317,6 +416,33 @@ export type Database = {
       };
     };
     Views: {
+      agent_overrun_snapshot: {
+        Row: {
+          alerts_triggered: number | null;
+          baseline_budget: number | null;
+          error_summary: string | null;
+          forecast_points_written: number | null;
+          last_alert_id: string | null;
+          last_alert_severity: string | null;
+          last_alert_status: string | null;
+          last_alert_triggered_at: string | null;
+          last_run_finished_at: string | null;
+          last_run_id: string | null;
+          last_run_mode: string | null;
+          last_run_started_at: string | null;
+          last_run_status: string | null;
+          overrun_amount: number | null;
+          overrun_pct: number | null;
+          projected_total_cost: number | null;
+          project_id: string | null;
+          project_nombre: string | null;
+          supplies_scraped_failed: number | null;
+          supplies_scraped_ok: number | null;
+          supplies_targeted: number | null;
+          threshold_pct: number | null;
+        };
+        Relationships: [];
+      };
       management_report_data: {
         Row: {
           alertas_insumos_criticos: Json | null;
