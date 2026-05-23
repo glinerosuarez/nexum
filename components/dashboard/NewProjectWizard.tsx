@@ -18,17 +18,17 @@ import {
   type CreateActionState,
 } from "@/app/dashboard/proyectos/nuevo/actions";
 import {
-  parseContractFile,
-  type ParsedContract,
+  parseContractFiles,
+  type MergedContract,
   type ParsedPhase,
 } from "@/lib/contract-parser";
 
 const createInitial: CreateActionState = { ok: false, message: null };
 
 const ACCEPTED_TYPES =
-  ".xml,.csv,.docx,.pdf,.png,.jpg,.jpeg,.webp,application/xml,text/xml,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*";
+  ".xml,.csv,.md,.markdown,.docx,.pdf,.png,.jpg,.jpeg,.webp,application/xml,text/xml,text/csv,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*";
 
-const MAX_BYTES = 32 * 1024 * 1024;
+const MAX_BYTES_PER_FILE = 32 * 1024 * 1024;
 
 export function NewProjectWizard() {
   const [createState, createFormAction] = useActionState(
@@ -36,35 +36,43 @@ export function NewProjectWizard() {
     createInitial,
   );
 
-  const [parsed, setParsed] = useState<ParsedContract | null>(null);
+  const [parsed, setParsed] = useState<MergedContract | null>(null);
   const [phases, setPhases] = useState<ParsedPhase[]>([]);
-  const [fileMeta, setFileMeta] = useState<{
-    name: string;
-    size: number;
-    type: string;
-  } | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  async function handleFile(file: File | null) {
-    if (!file) return;
+  function addFiles(incoming: FileList | File[]) {
     setParseError(null);
-    setFileMeta({ name: file.name, size: file.size, type: file.type });
-
-    if (file.size > MAX_BYTES) {
-      setParseError("El archivo supera el límite de 32 MB.");
-      return;
+    const next: File[] = [...files];
+    for (const f of Array.from(incoming)) {
+      if (f.size > MAX_BYTES_PER_FILE) {
+        setParseError(`"${f.name}" supera el límite de 32 MB.`);
+        continue;
+      }
+      if (!next.some((x) => x.name === f.name && x.size === f.size)) {
+        next.push(f);
+      }
     }
+    setFiles(next);
+  }
 
+  function removeFile(idx: number) {
+    setFiles(files.filter((_, i) => i !== idx));
+  }
+
+  async function analyze() {
+    if (files.length === 0) return;
+    setParseError(null);
     setParsing(true);
     try {
-      const result = await parseContractFile(file);
+      const result = await parseContractFiles(files);
       setParsed(result);
       setPhases(result.fases ?? []);
     } catch (err) {
-      setParseError(`No pudimos leer el contrato: ${(err as Error).message}`);
+      setParseError(`No pudimos leer los archivos: ${(err as Error).message}`);
     } finally {
       setParsing(false);
     }
@@ -73,7 +81,7 @@ export function NewProjectWizard() {
   function reset() {
     setParsed(null);
     setPhases([]);
-    setFileMeta(null);
+    setFiles([]);
     setParseError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
@@ -91,17 +99,11 @@ export function NewProjectWizard() {
           onDrop={(e) => {
             e.preventDefault();
             setDragging(false);
-            const f = e.dataTransfer.files?.[0];
-            if (f) {
-              if (fileInputRef.current) {
-                const dt = new DataTransfer();
-                dt.items.add(f);
-                fileInputRef.current.files = dt.files;
-              }
-              void handleFile(f);
+            if (e.dataTransfer.files?.length) {
+              addFiles(e.dataTransfer.files);
             }
           }}
-          className={`flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-14 text-center transition-colors ${
+          className={`flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-12 text-center transition-colors ${
             dragging
               ? "border-ink bg-ink/[0.03]"
               : "border-line bg-canvas-raised hover:border-ink/30 hover:bg-ink/[0.02]"
@@ -111,39 +113,55 @@ export function NewProjectWizard() {
             aria-hidden="true"
             className="grid h-12 w-12 place-items-center rounded-2xl bg-ink text-canvas"
           >
-            {parsing ? (
-              <Loader2 className="h-5 w-5 animate-spin" />
-            ) : (
-              <Upload className="h-5 w-5" />
-            )}
+            <Upload className="h-5 w-5" />
           </span>
           <p className="mt-4 font-display text-lg text-ink">
-            {parsing
-              ? "Analizando contrato…"
-              : "Arrastra el contrato aquí o haz clic para seleccionar"}
+            Arrastra uno o varios contratos o haz clic para seleccionar
           </p>
           <p className="mt-1.5 text-sm text-ink-muted">
-            Acepta XML (MS Project), CSV, DOCX, PDF e imágenes (PNG, JPG).
+            XML (MS Project) + APU (MD/CSV) + documentos. Mezclamos los datos
+            automáticamente.
           </p>
           <input
             id="contract"
             ref={fileInputRef}
             type="file"
             accept={ACCEPTED_TYPES}
+            multiple
             className="sr-only"
             disabled={parsing}
-            onChange={(e) => void handleFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => {
+              if (e.target.files) addFiles(e.target.files);
+            }}
           />
-          {fileMeta ? (
-            <span className="mt-5 inline-flex items-center gap-2 rounded-full border border-line bg-canvas px-3 py-1.5 text-xs text-ink">
-              <FileTypeIcon name={fileMeta.name} type={fileMeta.type} />
-              <span className="font-mono">{fileMeta.name}</span>
-              <span className="text-ink-soft">
-                · {formatBytes(fileMeta.size)}
-              </span>
-            </span>
-          ) : null}
         </label>
+
+        {files.length > 0 ? (
+          <ul className="space-y-2">
+            {files.map((f, idx) => (
+              <li
+                key={`${f.name}-${idx}`}
+                className="flex items-center justify-between gap-3 rounded-xl border border-line bg-canvas-raised px-3 py-2.5"
+              >
+                <span className="inline-flex min-w-0 items-center gap-2 text-sm text-ink">
+                  <FileTypeIcon name={f.name} type={f.type} />
+                  <span className="truncate font-mono text-xs">{f.name}</span>
+                  <span className="shrink-0 text-[11px] text-ink-soft">
+                    · {formatBytes(f.size)}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => removeFile(idx)}
+                  aria-label={`Quitar ${f.name}`}
+                  className="rounded-full px-2 py-0.5 text-xs text-ink-soft hover:bg-ink/5 hover:text-status-risk"
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
 
         {parseError ? (
           <div
@@ -162,9 +180,26 @@ export function NewProjectWizard() {
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />
             Volver
           </Link>
-          <span className="text-xs text-ink-soft">
-            El análisis se hace en tu navegador — el archivo no sube al servidor.
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="hidden text-xs text-ink-soft sm:inline">
+              El análisis ocurre en tu navegador.
+            </span>
+            <button
+              type="button"
+              onClick={() => void analyze()}
+              disabled={files.length === 0 || parsing}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-ink px-5 text-sm font-medium text-canvas transition-colors hover:bg-[#1a1a1c] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {parsing ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Upload className="h-4 w-4" aria-hidden="true" />
+              )}
+              {parsing
+                ? "Analizando…"
+                : `Analizar ${files.length || ""} archivo${files.length === 1 ? "" : "s"}`}
+            </button>
+          </div>
         </div>
 
         <FormatsCard />
@@ -179,6 +214,7 @@ export function NewProjectWizard() {
         confidence={parsed.confidence}
         notes={parsed.notas}
         filename={parsed.raw_filename}
+        files={parsed.files}
         onReset={reset}
       />
 
@@ -293,21 +329,24 @@ function CreateSubmit() {
 }
 
 function DetectionBanner({
-  source,
   confidence,
   notes,
   filename,
+  files,
   onReset,
 }: {
   source: string;
   confidence: string;
   notes: string[];
   filename: string;
+  files?: { filename: string; source: string; confidence: string; contributed: string[] }[];
   onReset: () => void;
 }) {
   const sourceLabel: Record<string, string> = {
     msproject_xml: "Microsoft Project (XML)",
+    apu_markdown: "APU (Markdown)",
     csv: "CSV",
+    markdown: "Markdown",
     docx: "Documento Word",
     pdf: "PDF",
     image: "Imagen",
@@ -319,6 +358,7 @@ function DetectionBanner({
       : confidence === "media"
         ? "bg-status-warn/10 text-status-warn"
         : "bg-ink/5 text-ink-muted";
+
   return (
     <div className="rounded-2xl border border-line bg-canvas-raised p-4">
       <div className="flex items-start gap-3">
@@ -331,26 +371,50 @@ function DetectionBanner({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-medium text-ink">
-              Detectamos los datos del contrato
+              Datos detectados de {files?.length ?? 1} archivo{(files?.length ?? 1) === 1 ? "" : "s"}
             </p>
-            <span className="rounded-full bg-ink/5 px-2 py-0.5 text-[11px] font-medium text-ink">
-              {sourceLabel[source] ?? source}
-            </span>
             <span
               className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${confidenceTone}`}
             >
               Confianza {confidence}
             </span>
           </div>
-          <p className="mt-1 truncate font-mono text-[11px] text-ink-soft">
-            {filename}
-          </p>
-          {notes.length > 0 ? (
-            <ul className="mt-2 space-y-0.5 text-xs text-ink-muted">
-              {notes.map((n, i) => (
-                <li key={i}>· {n}</li>
+          <p className="mt-1 truncate font-mono text-[11px] text-ink-soft">{filename}</p>
+
+          {files && files.length > 0 ? (
+            <ul className="mt-3 space-y-1.5">
+              {files.map((f, i) => (
+                <li
+                  key={i}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line/70 bg-canvas px-2.5 py-1.5 text-[11px]"
+                >
+                  <span className="inline-flex items-center gap-2 truncate text-ink">
+                    <span className="rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ink-muted">
+                      {sourceLabel[f.source] ?? f.source}
+                    </span>
+                    <span className="truncate font-mono">{f.filename}</span>
+                  </span>
+                  <span className="text-ink-soft">
+                    {f.contributed.length > 0
+                      ? `aporta: ${f.contributed.join(", ")}`
+                      : "sin aporte"}
+                  </span>
+                </li>
               ))}
             </ul>
+          ) : null}
+
+          {notes.length > 0 ? (
+            <details className="mt-3 text-xs text-ink-muted">
+              <summary className="cursor-pointer text-ink-soft hover:text-ink">
+                Ver notas de extracción ({notes.length})
+              </summary>
+              <ul className="mt-2 space-y-0.5">
+                {notes.map((n, i) => (
+                  <li key={i}>· {n}</li>
+                ))}
+              </ul>
+            </details>
           ) : null}
         </div>
         <button

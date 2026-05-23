@@ -7,17 +7,18 @@ import {
   Plus,
 } from "lucide-react";
 import { Topbar } from "@/components/dashboard/Topbar";
+import { DeleteProjectButton } from "@/components/dashboard/DeleteProjectButton";
 import { listProjects } from "@/lib/dashboard-data";
 import { fmtCOPCompact, fmtDate, fmtPercent } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
 interface ProyectosPageProps {
-  searchParams: Promise<{ created?: string }>;
+  searchParams: Promise<{ created?: string; deleted?: string }>;
 }
 
 export default async function ProyectosPage({ searchParams }: ProyectosPageProps) {
-  const { created } = await searchParams;
+  const { created, deleted } = await searchParams;
   const projects = await listProjects();
 
   const presupuestoTotal = projects.reduce(
@@ -41,6 +42,14 @@ export default async function ProyectosPage({ searchParams }: ProyectosPageProps
             className="rounded-2xl border border-status-ok/30 bg-status-ok/5 px-4 py-3 text-sm text-status-ok"
           >
             Proyecto creado correctamente.
+          </div>
+        ) : null}
+        {deleted ? (
+          <div
+            role="status"
+            className="rounded-2xl border border-ink/20 bg-ink/[0.04] px-4 py-3 text-sm text-ink"
+          >
+            Proyecto eliminado.
           </div>
         ) : null}
 
@@ -84,7 +93,13 @@ export default async function ProyectosPage({ searchParams }: ProyectosPageProps
                   ? (p.gasto_ejecutado / p.presupuesto_total) * 100
                   : 0;
                 return (
-                  <li key={p.id}>
+                  <li key={p.id} className="relative">
+                    <div className="absolute right-4 top-4 z-10">
+                      <DeleteProjectButton
+                        projectId={p.id}
+                        projectName={p.nombre}
+                      />
+                    </div>
                     <Link
                       href={`/dashboard/proyectos/${p.id}`}
                       className="group block px-5 py-5 transition-colors hover:bg-ink/[0.02] sm:px-6"

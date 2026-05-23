@@ -10,7 +10,9 @@ import {
   Wallet,
 } from "lucide-react";
 import { Topbar } from "@/components/dashboard/Topbar";
+import { DeleteProjectButton } from "@/components/dashboard/DeleteProjectButton";
 import { KPICard } from "@/components/dashboard/KPICard";
+import { ProjectionCurve } from "@/components/dashboard/ProjectionCurve";
 import {
   AvailabilityBadge,
   SupplyTypeBadge,
@@ -32,7 +34,7 @@ export default async function ProjectDashboard({
   const { id: projectId } = await params;
   const { created } = await searchParams;
   const data = await getDashboardData(projectId);
-  const { project, totals, alerts, topCriticalSupplies } = data;
+  const { project, totals, alerts, topCriticalSupplies, curva } = data;
 
   const cpiTone = project?.cpi == null ? "neutral" : project.cpi >= 1 ? "ok" : project.cpi >= 0.9 ? "warn" : "risk";
   const spiTone = project?.spi == null ? "neutral" : project.spi >= 1 ? "ok" : project.spi >= 0.9 ? "warn" : "risk";
@@ -62,6 +64,16 @@ export default async function ProjectDashboard({
             className="rounded-2xl border border-status-ok/30 bg-status-ok/5 px-4 py-3 text-sm text-status-ok"
           >
             Proyecto creado correctamente.
+          </div>
+        ) : null}
+
+        {project ? (
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <DeleteProjectButton
+              projectId={project.id}
+              projectName={project.nombre}
+              variant="danger"
+            />
           </div>
         ) : null}
         <section aria-label="KPIs ejecutivos" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -148,6 +160,8 @@ export default async function ProjectDashboard({
             }}
           />
         </section>
+
+        <ProjectionCurve data={curva} />
 
         <div className="grid gap-6 lg:grid-cols-12">
           <section
