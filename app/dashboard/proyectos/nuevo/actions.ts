@@ -23,6 +23,11 @@ function asNumber(value: FormDataEntryValue | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function clampPct(value: number | null | undefined): number {
+  if (value == null || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Number(value)));
+}
+
 export async function createProjectAction(
   _prev: CreateActionState,
   formData: FormData,
@@ -86,6 +91,11 @@ export async function createProjectAction(
         nombre: p.nombre.trim().slice(0, 120),
         descripcion: null,
         sort_order: p.sort_order ?? idx + 1,
+        fecha_inicio: p.fecha_inicio,
+        fecha_fin: p.fecha_fin,
+        costo_planeado: p.costo ?? 0,
+        costo_real: 0,
+        porcentaje_completado: clampPct(p.porcentaje_completado),
       }));
     if (phaseRows.length > 0) {
       await supabase.from("project_phases").insert(phaseRows);
@@ -94,4 +104,40 @@ export async function createProjectAction(
 
   revalidatePath("/dashboard/proyectos");
   redirect(`/dashboard/proyectos/${project.id}?created=1`);
+}
+
+export interface DeleteActionState {
+  ok: boolean;
+  message: string | null;
+}
+
+export async function deleteProjectAction(
+  _prev: DeleteActionState,
+  formData: FormData,
+): Promise<DeleteActionState> {
+  const id = (formData.get("project_id") ?? "").toString().trim();
+  if (!id) {
+    return { ok: false, message: "Falta el identificador del proyecto." };
+  }
+  const confirmName = (formData.get("confirm_name") ?? "").toString().trim();
+  const expectedName = (formData.get("expected_name") ?? "").toString().trim();
+  if (confirmName !== expectedName) {
+    return {
+      ok: false,
+      message: "Escribe el nombre exacto del proyecto para confirmar.",
+    };
+  }
+
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase.from("projects").delete().eq("id", id);
+
+  if (error) {
+    return {
+      ok: false,
+      message: `No pudimos eliminar el proyecto: ${error.message}`,
+    };
+  }
+
+  revalidatePath("/dashboard/proyectos");
+  redirect(`/dashboard/proyectos?deleted=1`);
 }
