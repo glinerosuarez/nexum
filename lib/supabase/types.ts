@@ -96,10 +96,15 @@ export type Database = {
       };
       project_phases: {
         Row: {
+          costo_planeado: number;
+          costo_real: number;
           created_at: string;
           descripcion: string | null;
+          fecha_fin: string | null;
+          fecha_inicio: string | null;
           id: string;
           nombre: string;
+          porcentaje_completado: number;
           project_id: string;
           sort_order: number;
           updated_at: string;

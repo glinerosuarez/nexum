@@ -1,5 +1,6 @@
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { toNumber } from "@/lib/format";
+import { buildProjectionCurve, type CurveData } from "@/lib/curve";
 
 export interface ProjectSummary {
   id: string;
@@ -83,6 +84,7 @@ export interface DashboardData {
   priceRisk: PriceRiskSummary;
   alerts: CriticalAlertRow[];
   topCriticalSupplies: SupplyRow[];
+  curva: CurveData | null;
 }
 
 export interface PriceRiskRow {
@@ -433,6 +435,43 @@ export async function getDashboardData(projectId?: string): Promise<DashboardDat
     .sort((a, b) => b.exposicion_presupuestal - a.exposicion_presupuestal)
     .slice(0, 6);
 
+  let curva: CurveData | null = null;
+  if (project) {
+    const { data: phaseRows } = await supabase
+      .from("project_phases")
+      .select(
+        "nombre, fecha_inicio, fecha_fin, costo_planeado, costo_real, porcentaje_completado",
+      )
+      .eq("project_id", project.id)
+      .order("sort_order", { ascending: true });
+
+    const curvePhases = (phaseRows ?? []).map((p) => ({
+      nombre: p.nombre,
+      fecha_inicio: p.fecha_inicio,
+      fecha_fin: p.fecha_fin,
+      costo_planeado: toNumber(p.costo_planeado),
+      costo_real: toNumber(p.costo_real),
+      porcentaje_completado: toNumber(p.porcentaje_completado),
+    }));
+
+    const { data: projectMeta } = await supabase
+      .from("projects")
+      .select(
+        "fecha_inicio_planeada, fecha_fin_planeada, presupuesto_total",
+      )
+      .eq("id", project.id)
+      .maybeSingle();
+
+    curva = buildProjectionCurve({
+      phases: curvePhases,
+      projectStart: projectMeta?.fecha_inicio_planeada ?? null,
+      projectEnd: projectMeta?.fecha_fin_planeada ?? null,
+      totalBudget:
+        toNumber(projectMeta?.presupuesto_total) || project.presupuesto_total,
+      totalActualCost: project.gasto_ejecutado,
+    });
+  }
+
   const { data: poItems } = await supabase
     .from("purchase_order_items")
     .select("subtotal, cantidad, precio_unitario, es_prioritario, purchase_order_id");
@@ -600,6 +639,7 @@ export async function getDashboardData(projectId?: string): Promise<DashboardDat
     priceRisk,
     alerts,
     topCriticalSupplies,
+    curva,
   };
 }
 
