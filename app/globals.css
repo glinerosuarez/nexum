@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-canvas: #f7f6f2;
+  --color-ink: #0b0b0c;
+  --color-accent: #b45309;
+  --color-line: #e5e2da;
+  color-scheme: light;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  html,
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+  }
+
+  body {
+    font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+    font-feature-settings: "ss01", "cv11";
+  }
+
+  ::selection {
+    background-color: rgba(180, 83, 9, 0.18);
+    color: var(--color-ink);
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+}
+
+@layer components {
+  .eyebrow {
+    @apply inline-flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-ink-muted;
+  }
+
+  .hairline {
+    @apply h-px w-full bg-line;
+  }
+
+  .grid-bg {
+    background-image:
+      linear-gradient(to right, rgba(11, 11, 12, 0.04) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(11, 11, 12, 0.04) 1px, transparent 1px);
+    background-size: 56px 56px;
+    background-position: -1px -1px;
+  }
+
+  .noise {
+    background-image: radial-gradient(rgba(11, 11, 12, 0.05) 1px, transparent 1px);
+    background-size: 3px 3px;
+  }
+}
