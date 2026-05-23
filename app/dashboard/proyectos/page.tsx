@@ -86,7 +86,7 @@ export default async function ProyectosPage({ searchParams }: ProyectosPageProps
                 return (
                   <li key={p.id}>
                     <Link
-                      href={`/dashboard?project=${p.id}`}
+                      href={`/dashboard/proyectos/${p.id}`}
                       className="group block px-5 py-5 transition-colors hover:bg-ink/[0.02] sm:px-6"
                     >
                       <div className="flex flex-wrap items-start justify-between gap-4">
