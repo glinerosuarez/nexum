@@ -7,8 +7,13 @@ import { fmtCOP, fmtCOPCompact, fmtDate, fmtPercent } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-export default async function CostosPage() {
-  const data = await getCostsData();
+interface CostosPageProps {
+  searchParams: Promise<{ project?: string }>;
+}
+
+export default async function CostosPage({ searchParams }: CostosPageProps) {
+  const { project: projectId } = await searchParams;
+  const data = await getCostsData(projectId);
   const { project, budgetByPhase, purchaseOrders, gastoPorCategoria } = data;
 
   const presupuesto = project?.presupuesto_total ?? 0;
