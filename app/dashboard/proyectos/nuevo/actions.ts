@@ -3,55 +3,11 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import {
-  parseContractFile,
-  type ParsedContract,
-  type ParsedPhase,
-} from "@/lib/contract-parser";
-
-export interface ParseActionState {
-  ok: boolean;
-  message: string | null;
-  parsed: ParsedContract | null;
-}
+import type { ParsedPhase } from "@/lib/contract-parser";
 
 export interface CreateActionState {
   ok: boolean;
   message: string | null;
-}
-
-export async function parseContractAction(
-  _prev: ParseActionState,
-  formData: FormData,
-): Promise<ParseActionState> {
-  const file = formData.get("contract");
-  if (!(file instanceof File) || file.size === 0) {
-    return {
-      ok: false,
-      message: "Selecciona un archivo de contrato para continuar.",
-      parsed: null,
-    };
-  }
-
-  const MAX_BYTES = 8 * 1024 * 1024;
-  if (file.size > MAX_BYTES) {
-    return {
-      ok: false,
-      message: "El archivo supera el límite de 8 MB.",
-      parsed: null,
-    };
-  }
-
-  try {
-    const parsed = await parseContractFile(file);
-    return { ok: true, message: null, parsed };
-  } catch (err) {
-    return {
-      ok: false,
-      message: `No pudimos leer el contrato: ${(err as Error).message}`,
-      parsed: null,
-    };
-  }
 }
 
 function asDate(value: FormDataEntryValue | null): string | null {
@@ -137,6 +93,5 @@ export async function createProjectAction(
   }
 
   revalidatePath("/dashboard/proyectos");
-  revalidatePath("/dashboard");
-  redirect(`/dashboard/proyectos?created=1`);
+  redirect(`/dashboard/proyectos/${project.id}?created=1`);
 }

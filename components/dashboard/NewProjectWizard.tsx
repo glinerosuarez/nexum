@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { useActionState, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import Link from "next/link";
 import {
@@ -11,57 +11,76 @@ import {
   Image as ImageIcon,
   Loader2,
   RotateCcw,
-  Sparkles,
   Upload,
 } from "lucide-react";
 import {
   createProjectAction,
-  parseContractAction,
   type CreateActionState,
-  type ParseActionState,
 } from "@/app/dashboard/proyectos/nuevo/actions";
-import type { ParsedPhase } from "@/lib/contract-parser";
+import {
+  parseContractFile,
+  type ParsedContract,
+  type ParsedPhase,
+} from "@/lib/contract-parser";
 
-const parseInitial: ParseActionState = { ok: false, message: null, parsed: null };
 const createInitial: CreateActionState = { ok: false, message: null };
 
-const ACCEPTED_TYPES = ".xml,.csv,.docx,.pdf,.png,.jpg,.jpeg,.webp,application/xml,text/xml,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*";
+const ACCEPTED_TYPES =
+  ".xml,.csv,.docx,.pdf,.png,.jpg,.jpeg,.webp,application/xml,text/xml,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*";
+
+const MAX_BYTES = 32 * 1024 * 1024;
 
 export function NewProjectWizard() {
-  const [parseState, parseFormAction] = useActionState(parseContractAction, parseInitial);
-  const [createState, createFormAction] = useActionState(createProjectAction, createInitial);
+  const [createState, createFormAction] = useActionState(
+    createProjectAction,
+    createInitial,
+  );
 
+  const [parsed, setParsed] = useState<ParsedContract | null>(null);
   const [phases, setPhases] = useState<ParsedPhase[]>([]);
-  const [fileMeta, setFileMeta] = useState<{ name: string; size: number; type: string } | null>(null);
+  const [fileMeta, setFileMeta] = useState<{
+    name: string;
+    size: number;
+    type: string;
+  } | null>(null);
+  const [parsing, setParsing] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const parseFormRef = useRef<HTMLFormElement>(null);
 
-  useEffect(() => {
-    if (parseState.parsed?.fases) setPhases(parseState.parsed.fases);
-  }, [parseState.parsed]);
-
-  function handleFileChange(file: File | null) {
+  async function handleFile(file: File | null) {
     if (!file) return;
+    setParseError(null);
     setFileMeta({ name: file.name, size: file.size, type: file.type });
+
+    if (file.size > MAX_BYTES) {
+      setParseError("El archivo supera el límite de 32 MB.");
+      return;
+    }
+
+    setParsing(true);
+    try {
+      const result = await parseContractFile(file);
+      setParsed(result);
+      setPhases(result.fases ?? []);
+    } catch (err) {
+      setParseError(`No pudimos leer el contrato: ${(err as Error).message}`);
+    } finally {
+      setParsing(false);
+    }
   }
 
   function reset() {
-    setFileMeta(null);
+    setParsed(null);
     setPhases([]);
+    setFileMeta(null);
+    setParseError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
-    parseFormRef.current?.reset();
-    window.location.reload();
   }
 
-  if (!parseState.parsed) {
+  if (!parsed) {
     return (
-      <form
-        ref={parseFormRef}
-        action={parseFormAction}
-        className="space-y-6"
-        noValidate
-      >
+      <div className="space-y-6">
         <label
           htmlFor="contract"
           onDragOver={(e) => {
@@ -73,11 +92,13 @@ export function NewProjectWizard() {
             e.preventDefault();
             setDragging(false);
             const f = e.dataTransfer.files?.[0];
-            if (f && fileInputRef.current) {
-              const dt = new DataTransfer();
-              dt.items.add(f);
-              fileInputRef.current.files = dt.files;
-              handleFileChange(f);
+            if (f) {
+              if (fileInputRef.current) {
+                const dt = new DataTransfer();
+                dt.items.add(f);
+                fileInputRef.current.files = dt.files;
+              }
+              void handleFile(f);
             }
           }}
           className={`flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-6 py-14 text-center transition-colors ${
@@ -90,10 +111,16 @@ export function NewProjectWizard() {
             aria-hidden="true"
             className="grid h-12 w-12 place-items-center rounded-2xl bg-ink text-canvas"
           >
-            <Upload className="h-5 w-5" />
+            {parsing ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <Upload className="h-5 w-5" />
+            )}
           </span>
           <p className="mt-4 font-display text-lg text-ink">
-            Arrastra el contrato aquí o haz clic para seleccionar
+            {parsing
+              ? "Analizando contrato…"
+              : "Arrastra el contrato aquí o haz clic para seleccionar"}
           </p>
           <p className="mt-1.5 text-sm text-ink-muted">
             Acepta XML (MS Project), CSV, DOCX, PDF e imágenes (PNG, JPG).
@@ -101,28 +128,29 @@ export function NewProjectWizard() {
           <input
             id="contract"
             ref={fileInputRef}
-            name="contract"
             type="file"
             accept={ACCEPTED_TYPES}
-            required
             className="sr-only"
-            onChange={(e) => handleFileChange(e.target.files?.[0] ?? null)}
+            disabled={parsing}
+            onChange={(e) => void handleFile(e.target.files?.[0] ?? null)}
           />
           {fileMeta ? (
             <span className="mt-5 inline-flex items-center gap-2 rounded-full border border-line bg-canvas px-3 py-1.5 text-xs text-ink">
               <FileTypeIcon name={fileMeta.name} type={fileMeta.type} />
               <span className="font-mono">{fileMeta.name}</span>
-              <span className="text-ink-soft">· {formatBytes(fileMeta.size)}</span>
+              <span className="text-ink-soft">
+                · {formatBytes(fileMeta.size)}
+              </span>
             </span>
           ) : null}
         </label>
 
-        {parseState.message ? (
+        {parseError ? (
           <div
             role="alert"
             className="rounded-xl border border-status-risk/30 bg-status-risk/5 px-4 py-3 text-sm text-status-risk"
           >
-            {parseState.message}
+            {parseError}
           </div>
         ) : null}
 
@@ -134,15 +162,15 @@ export function NewProjectWizard() {
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />
             Volver
           </Link>
-          <ParseSubmit hasFile={Boolean(fileMeta)} />
+          <span className="text-xs text-ink-soft">
+            El análisis se hace en tu navegador — el archivo no sube al servidor.
+          </span>
         </div>
 
         <FormatsCard />
-      </form>
+      </div>
     );
   }
-
-  const parsed = parseState.parsed;
 
   return (
     <form action={createFormAction} className="space-y-7" noValidate>
@@ -209,7 +237,11 @@ export function NewProjectWizard() {
           type="number"
           step="0.01"
           inputMode="decimal"
-          defaultValue={parsed.presupuesto_total != null ? String(parsed.presupuesto_total) : ""}
+          defaultValue={
+            parsed.presupuesto_total != null
+              ? String(parsed.presupuesto_total)
+              : ""
+          }
         />
       </section>
 
@@ -237,24 +269,6 @@ export function NewProjectWizard() {
         <CreateSubmit />
       </div>
     </form>
-  );
-}
-
-function ParseSubmit({ hasFile }: { hasFile: boolean }) {
-  const { pending } = useFormStatus();
-  return (
-    <button
-      type="submit"
-      disabled={pending || !hasFile}
-      className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-ink px-5 text-sm font-medium text-canvas transition-colors hover:bg-[#1a1a1c] disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      {pending ? (
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-      ) : (
-        <Sparkles className="h-4 w-4" aria-hidden="true" />
-      )}
-      Analizar contrato
-    </button>
   );
 }
 
@@ -322,11 +336,15 @@ function DetectionBanner({
             <span className="rounded-full bg-ink/5 px-2 py-0.5 text-[11px] font-medium text-ink">
               {sourceLabel[source] ?? source}
             </span>
-            <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${confidenceTone}`}>
+            <span
+              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${confidenceTone}`}
+            >
               Confianza {confidence}
             </span>
           </div>
-          <p className="mt-1 truncate font-mono text-[11px] text-ink-soft">{filename}</p>
+          <p className="mt-1 truncate font-mono text-[11px] text-ink-soft">
+            {filename}
+          </p>
           {notes.length > 0 ? (
             <ul className="mt-2 space-y-0.5 text-xs text-ink-muted">
               {notes.map((n, i) => (
@@ -400,7 +418,7 @@ function PhasesEditor({
         <ul className="mt-5 space-y-2">
           {phases.map((ph, idx) => (
             <li
-              key={`${idx}-${ph.nombre}`}
+              key={idx}
               className="grid grid-cols-12 items-center gap-3 rounded-xl border border-line bg-canvas px-3 py-2"
             >
               <span className="col-span-1 text-center font-mono text-xs text-ink-soft">
@@ -452,7 +470,10 @@ function Field({
 }) {
   return (
     <div className={className}>
-      <label htmlFor={name} className="block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-soft">
+      <label
+        htmlFor={name}
+        className="block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-soft"
+      >
         {label} {required ? <span className="text-status-risk">*</span> : null}
       </label>
       <input
@@ -482,7 +503,10 @@ function SelectField({
 }) {
   return (
     <div>
-      <label htmlFor={name} className="block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-soft">
+      <label
+        htmlFor={name}
+        className="block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-soft"
+      >
         {label}
       </label>
       <select
@@ -503,11 +527,25 @@ function SelectField({
 
 function FormatsCard() {
   const items = [
-    { ext: "XML", label: "Microsoft Project — extracción rica de nombre, fechas, presupuesto y fases." },
-    { ext: "CSV", label: "Detección por columnas: nombre, ubicación, fechas, presupuesto, fases." },
-    { ext: "DOCX", label: "Documento Word — completarás los campos manualmente." },
+    {
+      ext: "XML",
+      label:
+        "Microsoft Project — extracción rica de nombre, fechas, presupuesto y fases.",
+    },
+    {
+      ext: "CSV",
+      label:
+        "Detección por columnas: nombre, ubicación, fechas, presupuesto, fases.",
+    },
+    {
+      ext: "DOCX",
+      label: "Documento Word — completarás los campos manualmente.",
+    },
     { ext: "PDF", label: "Contrato PDF — completarás los campos manualmente." },
-    { ext: "IMG", label: "PNG/JPG/WEBP — usamos el nombre del archivo como referencia." },
+    {
+      ext: "IMG",
+      label: "PNG/JPG/WEBP — usamos el nombre del archivo como referencia.",
+    },
   ];
   return (
     <div className="rounded-2xl border border-dashed border-line bg-canvas-raised p-5">
@@ -527,8 +565,12 @@ function FormatsCard() {
 }
 
 function FileTypeIcon({ name, type }: { name: string; type: string }) {
-  if (type.startsWith("image/")) return <ImageIcon className="h-3.5 w-3.5 text-ink-soft" aria-hidden="true" />;
-  if (name.toLowerCase().endsWith(".xml")) return <FileText className="h-3.5 w-3.5 text-ink-soft" aria-hidden="true" />;
+  if (type.startsWith("image/"))
+    return (
+      <ImageIcon className="h-3.5 w-3.5 text-ink-soft" aria-hidden="true" />
+    );
+  if (name.toLowerCase().endsWith(".xml"))
+    return <FileText className="h-3.5 w-3.5 text-ink-soft" aria-hidden="true" />;
   return <FileText className="h-3.5 w-3.5 text-ink-soft" aria-hidden="true" />;
 }
 

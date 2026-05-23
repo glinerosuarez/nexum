@@ -6,39 +6,63 @@ import {
   FolderKanban,
   LayoutDashboard,
   PackageSearch,
+  Plus,
   Wallet,
+  X,
   type LucideIcon,
 } from "lucide-react";
+import { useProjects } from "./ProjectContext";
 
-const items: { href: string; label: string; icon: LucideIcon; description: string }[] = [
-  {
-    href: "/dashboard/proyectos",
-    label: "Proyectos",
-    icon: FolderKanban,
-    description: "Listado y creación",
-  },
-  {
-    href: "/dashboard",
-    label: "Vista ejecutiva",
-    icon: LayoutDashboard,
-    description: "KPIs y alertas",
-  },
-  {
-    href: "/dashboard/insumos",
-    label: "Insumos críticos",
-    icon: PackageSearch,
-    description: "Catálogo y disponibilidad",
-  },
-  {
-    href: "/dashboard/costos",
-    label: "Costos",
-    icon: Wallet,
-    description: "Presupuesto y gasto",
-  },
-];
+interface NavItem {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  description: string;
+}
 
 export function Sidebar() {
   const pathname = usePathname();
+  const projects = useProjects();
+
+  const projectMatch = pathname.match(
+    /^\/dashboard\/proyectos\/([0-9a-fA-F-]{36})(?:\/.*)?$/,
+  );
+  const currentProjectId = projectMatch?.[1] ?? null;
+  const currentProject = currentProjectId
+    ? (projects.find((p) => p.id === currentProjectId) ?? null)
+    : null;
+
+  const carteraItems: NavItem[] = [
+    {
+      href: "/dashboard/proyectos",
+      label: "Proyectos",
+      icon: FolderKanban,
+      description: `${projects.length} en cartera`,
+    },
+  ];
+
+  const projectItems: NavItem[] = currentProjectId
+    ? [
+        {
+          href: `/dashboard/proyectos/${currentProjectId}`,
+          label: "Vista ejecutiva",
+          icon: LayoutDashboard,
+          description: "KPIs y alertas",
+        },
+        {
+          href: `/dashboard/proyectos/${currentProjectId}/insumos`,
+          label: "Insumos críticos",
+          icon: PackageSearch,
+          description: "Catálogo y disponibilidad",
+        },
+        {
+          href: `/dashboard/proyectos/${currentProjectId}/costos`,
+          label: "Costos",
+          icon: Wallet,
+          description: "Presupuesto y gasto",
+        },
+      ]
+    : [];
 
   return (
     <aside
@@ -67,52 +91,123 @@ export function Sidebar() {
         </span>
       </Link>
 
-      <nav className="flex-1 space-y-1 p-3">
-        {items.map((item) => {
-          const active =
-            pathname === item.href ||
-            (item.href !== "/dashboard" && pathname.startsWith(item.href));
-          const Icon = item.icon;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              aria-current={active ? "page" : undefined}
-              className={`flex items-start gap-3 rounded-xl px-3 py-2.5 transition-colors ${
-                active
-                  ? "bg-ink text-canvas"
-                  : "text-ink-muted hover:bg-ink/5 hover:text-ink"
-              }`}
-            >
-              <span
-                className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg border ${
-                  active
-                    ? "border-canvas/15 bg-canvas/10 text-canvas"
-                    : "border-line bg-canvas text-ink"
+      <div className="flex flex-1 flex-col overflow-y-auto">
+        <section className="p-3">
+          <p className="px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-soft">
+            Cartera
+          </p>
+          <ul className="space-y-1">
+            {carteraItems.map((item) => (
+              <NavLink
+                key={item.href}
+                item={item}
+                active={isActive(pathname, item.href, true)}
+              />
+            ))}
+            <li>
+              <Link
+                href="/dashboard/proyectos/nuevo"
+                className={`flex items-center gap-2 rounded-xl border border-dashed border-line bg-canvas px-3 py-2 text-sm text-ink-muted transition-colors hover:border-ink/30 hover:text-ink ${
+                  pathname === "/dashboard/proyectos/nuevo"
+                    ? "border-ink/30 text-ink"
+                    : ""
                 }`}
               >
-                <Icon className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
-              </span>
-              <span className="flex flex-col">
-                <span className="text-sm font-medium leading-tight">
-                  {item.label}
-                </span>
-                <span
-                  className={`text-[11px] ${
-                    active ? "text-canvas/60" : "text-ink-soft"
-                  }`}
-                >
-                  {item.description}
-                </span>
-              </span>
-            </Link>
-          );
-        })}
-      </nav>
+                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                Nuevo proyecto
+              </Link>
+            </li>
+          </ul>
+        </section>
 
-      <div className="border-t border-line p-4 text-[11px] text-ink-soft">
-        Prototipo de hackathon v2.0
+        {currentProjectId ? (
+          <section className="border-t border-line p-3">
+            <div className="mb-2 flex items-start justify-between gap-2 px-2 pt-1">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-soft">
+                  Proyecto seleccionado
+                </p>
+                <p
+                  className="mt-1 truncate text-[13px] font-medium leading-tight text-ink"
+                  title={currentProject?.nombre ?? "Proyecto"}
+                >
+                  {currentProject?.nombre ?? "Proyecto"}
+                </p>
+              </div>
+              <Link
+                href="/dashboard/proyectos"
+                aria-label="Salir del proyecto"
+                className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-ink-soft transition-colors hover:bg-ink/5 hover:text-ink"
+              >
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </Link>
+            </div>
+            <ul className="mt-2 space-y-1">
+              {projectItems.map((item) => (
+                <NavLink
+                  key={item.href}
+                  item={item}
+                  active={isActive(pathname, item.href, item.label === "Vista ejecutiva")}
+                />
+              ))}
+            </ul>
+          </section>
+        ) : (
+          <section className="border-t border-line p-3">
+            <div className="rounded-xl border border-dashed border-line bg-canvas p-3 text-xs text-ink-soft">
+              Selecciona un proyecto desde la cartera para ver su vista ejecutiva, insumos críticos y costos.
+            </div>
+          </section>
+        )}
+
+        <div className="mt-auto border-t border-line p-4 text-[11px] text-ink-soft">
+          Prototipo de hackathon v2.0
+        </div>
       </div>
     </aside>
+  );
+}
+
+function isActive(pathname: string, href: string, exact: boolean): boolean {
+  if (exact) return pathname === href;
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+  const Icon = item.icon;
+  return (
+    <li>
+      <Link
+        href={item.href}
+        aria-current={active ? "page" : undefined}
+        className={`flex items-start gap-3 rounded-xl px-3 py-2.5 transition-colors ${
+          active
+            ? "bg-ink text-canvas"
+            : "text-ink-muted hover:bg-ink/5 hover:text-ink"
+        }`}
+      >
+        <span
+          className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg border ${
+            active
+              ? "border-canvas/15 bg-canvas/10 text-canvas"
+              : "border-line bg-canvas text-ink"
+          }`}
+        >
+          <Icon className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        </span>
+        <span className="flex min-w-0 flex-col">
+          <span className="text-sm font-medium leading-tight">
+            {item.label}
+          </span>
+          <span
+            className={`truncate text-[11px] ${
+              active ? "text-canvas/60" : "text-ink-soft"
+            }`}
+          >
+            {item.description}
+          </span>
+        </span>
+      </Link>
+    </li>
   );
 }
