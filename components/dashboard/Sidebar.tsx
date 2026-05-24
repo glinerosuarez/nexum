@@ -7,7 +7,6 @@ import {
   LayoutDashboard,
   PackageSearch,
   Plus,
-  Upload,
   Wallet,
   X,
   type LucideIcon,
@@ -55,12 +54,6 @@ export function Sidebar() {
           label: "Insumos críticos",
           icon: PackageSearch,
           description: "Catálogo y disponibilidad",
-        },
-        {
-          href: `/dashboard/proyectos/${currentProjectId}/insumos/precios`,
-          label: "Carga de precios",
-          icon: Upload,
-          description: "ETL y monitoreo",
         },
         {
           href: `/dashboard/proyectos/${currentProjectId}/costos`,

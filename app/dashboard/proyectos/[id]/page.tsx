@@ -9,7 +9,6 @@ import {
   Siren,
   TrendingUp,
   TriangleAlert,
-  Upload,
   Wallet,
 } from "lucide-react";
 import { Topbar } from "@/components/dashboard/Topbar";
@@ -177,16 +176,9 @@ export default async function ProjectDashboard({
                 Riesgo por variación de precios
               </h2>
               <p className="text-sm text-ink-soft">
-                Compara precios cargados en lote contra APU de onboarding.
+                Compara precios monitoreados contra APU de onboarding.
               </p>
             </div>
-            <Link
-              href={`/dashboard/proyectos/${projectId}/insumos/precios`}
-              className="inline-flex items-center gap-2 rounded-full border border-line bg-canvas-raised px-3 py-2 text-xs font-medium text-ink transition-colors hover:border-ink/25 hover:text-ink"
-            >
-              <Upload className="h-3.5 w-3.5" aria-hidden="true" />
-              Cargar lote de precios
-            </Link>
           </div>
 
           <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

@@ -1,5 +1,4 @@
-import Link from "next/link";
-import { AlertOctagon, ArrowUpRight, PackageSearch, Upload } from "lucide-react";
+import { AlertOctagon, PackageSearch } from "lucide-react";
 import { Topbar } from "@/components/dashboard/Topbar";
 import {
   AvailabilityBadge,
@@ -65,20 +64,10 @@ export default async function InsumosPage({ params }: InsumosPageProps) {
                 líneas en órdenes de compra.
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <Link
-                href={`/dashboard/proyectos/${projectId}/insumos/precios`}
-                className="inline-flex items-center gap-1 rounded-full border border-line bg-canvas px-3 py-1.5 text-[11px] font-medium text-ink hover:border-ink/25"
-              >
-                <Upload className="h-3 w-3" aria-hidden="true" />
-                Cargar precios
-                <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
-              </Link>
-              <PackageSearch
-                aria-hidden="true"
-                className="hidden h-5 w-5 text-ink-soft sm:block"
-              />
-            </div>
+            <PackageSearch
+              aria-hidden="true"
+              className="hidden h-5 w-5 text-ink-soft sm:block"
+            />
           </header>
 
           <div className="overflow-x-auto">
