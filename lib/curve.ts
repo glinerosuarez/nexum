@@ -39,6 +39,18 @@ function startOfMonth(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
+function toDay(date: Date): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDays(date: Date, days: number): Date {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+}
+
+function minDate(a: Date, b: Date): Date {
+  return a < b ? a : b;
+}
+
 function isoDayString(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -84,7 +96,7 @@ export function buildProjectionCurve(opts: {
   totalActualCost: number;
   today?: Date;
 }): CurveData | null {
-  const today = opts.today ?? new Date();
+  const todayDay = toDay(opts.today ?? new Date());
 
   const phasesWithDates = opts.phases.filter(
     (p) => p.fecha_inicio && p.fecha_fin && p.costo_planeado > 0,
@@ -145,13 +157,22 @@ export function buildProjectionCurve(opts: {
     }
   }
 
-  // Build monthly buckets between start and end (inclusive).
-  const buckets: { monthStart: Date; monthEnd: Date }[] = [];
+  // Build month-end checkpoints, capped at project end, and include a
+  // "today" checkpoint so CPTR/CPTP to-date is explicit (not deferred to
+  // month-end).
+  const bucketEnds: Date[] = [];
   let cursor = startOfMonth(inferredStart);
   while (cursor <= inferredEnd) {
-    buckets.push({ monthStart: cursor, monthEnd: endOfMonth(cursor) });
+    bucketEnds.push(minDate(endOfMonth(cursor), inferredEnd));
     cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
   }
+  if (todayDay >= inferredStart && todayDay <= inferredEnd) {
+    const hasToday = bucketEnds.some(
+      (d) => isoDayString(d) === isoDayString(todayDay),
+    );
+    if (!hasToday) bucketEnds.push(todayDay);
+  }
+  bucketEnds.sort((a, b) => a.getTime() - b.getTime());
 
   const points: CurvePoint[] = [];
 
@@ -159,7 +180,10 @@ export function buildProjectionCurve(opts: {
   let cumCptr = 0;
   let cumAcwp = 0;
 
-  for (const b of buckets) {
+  for (let i = 0; i < bucketEnds.length; i++) {
+    const bucketEnd = bucketEnds[i];
+    const bucketStart =
+      i === 0 ? inferredStart : addDays(bucketEnds[i - 1], 1);
     let bucketCptp = 0;
     let bucketCptr = 0;
     let bucketAcwp = 0;
@@ -170,33 +194,40 @@ export function buildProjectionCurve(opts: {
       const phaseDuration = daysBetween(ps, pe);
       if (phaseDuration <= 0) continue;
 
-      const overlap = overlapDays(ps, pe, b.monthStart, b.monthEnd);
+      const overlap = overlapDays(ps, pe, bucketStart, bucketEnd);
       const planRatio = overlap / phaseDuration;
       const plannedBucket = ph.costo_planeado * planRatio;
       bucketCptp += plannedBucket;
 
-      // Earned value: scale the phase's % complete by the proportion of
-      // planned time elapsed up to the end of this bucket.
-      const elapsedDays = overlapDays(ps, pe, ps, b.monthEnd);
-      const elapsedRatio = Math.min(1, elapsedDays / phaseDuration);
       const completed = ph.porcentaje_completado / 100;
-      // EV per bucket: contribution of new earned value vs previous month.
+      const realizedEnd = minDate(todayDay, pe);
+      const realizedDuration =
+        realizedEnd >= ps ? daysBetween(ps, realizedEnd) : 0;
+      const realizedElapsedDays = overlapDays(ps, realizedEnd, ps, bucketEnd);
+      const realizedElapsedRatio =
+        realizedDuration > 0
+          ? Math.min(1, realizedElapsedDays / realizedDuration)
+          : 0;
+      // EV per bucket: interpolate earned value up to "today", then hold.
       const earnedToEndOfBucket =
-        ph.costo_planeado * Math.min(elapsedRatio, completed);
-      const previousElapsedDays = overlapDays(
+        ph.costo_planeado * completed * realizedElapsedRatio;
+      const previousRealizedElapsedDays = overlapDays(
         ps,
-        pe,
+        realizedEnd,
         ps,
-        new Date(b.monthStart.getTime() - 86400000),
+        addDays(bucketStart, -1),
       );
-      const previousRatio = Math.min(1, previousElapsedDays / phaseDuration);
+      const previousRealizedRatio =
+        realizedDuration > 0
+          ? Math.min(1, previousRealizedElapsedDays / realizedDuration)
+          : 0;
       const earnedToPrevious =
-        ph.costo_planeado * Math.min(previousRatio, completed);
+        ph.costo_planeado * completed * previousRealizedRatio;
       bucketCptr += Math.max(0, earnedToEndOfBucket - earnedToPrevious);
 
-      // ACWP: spread the phase's actual cost linearly over completed days
+      // ACWP: spread actual cost with the same realized window used for EV.
       const actualSpread =
-        (ph.costo_real * (elapsedRatio - previousRatio));
+        (ph.costo_real * (realizedElapsedRatio - previousRealizedRatio));
       if (Number.isFinite(actualSpread) && actualSpread > 0) {
         bucketAcwp += actualSpread;
       }
@@ -207,11 +238,11 @@ export function buildProjectionCurve(opts: {
     cumAcwp += bucketAcwp;
 
     points.push({
-      fecha: isoDayString(b.monthEnd),
+      fecha: isoDayString(bucketEnd),
       cptp: Math.round(cumCptp),
       cptr: Math.round(cumCptr),
       acwp: Math.round(cumAcwp),
-      futuro: b.monthEnd > today,
+      futuro: bucketEnd > todayDay,
     });
   }
 
@@ -246,6 +277,6 @@ export function buildProjectionCurve(opts: {
     cpi: cpi != null ? Number(cpi.toFixed(3)) : null,
     fecha_inicio: isoDayString(inferredStart),
     fecha_fin: isoDayString(inferredEnd),
-    hoy: isoDayString(today),
+    hoy: isoDayString(todayDay),
   };
 }
