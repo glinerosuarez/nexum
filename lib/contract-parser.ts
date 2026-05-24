@@ -120,6 +120,65 @@ function detectLocation(name: string): string | null {
   return null;
 }
 
+interface MsProjectTask {
+  name: string;
+  outlineNumber: string;
+  outlineLevel: number;
+  isSummary: boolean;
+  start: string | null;
+  finish: string | null;
+  actualStart: string | null;
+  percentComplete: number | null;
+  cost: number | null;
+  actualCost: number | null;
+  remainingCost: number | null;
+}
+
+function toMsProjectTasks(
+  rawTasks: Record<string, unknown>[],
+  scaleCost: (raw: unknown) => number | null,
+): MsProjectTask[] {
+  return rawTasks.map((task) => ({
+    name: (task["Name"] as string | undefined) ?? "",
+    outlineNumber: (task["OutlineNumber"] as string | undefined) ?? "",
+    outlineLevel: Number(task["OutlineLevel"] ?? 0),
+    isSummary: task["Summary"] === "1" || task["Summary"] === 1,
+    start: isoDate(task["Start"] as string | undefined),
+    finish: isoDate(task["Finish"] as string | undefined),
+    actualStart: isoDate(task["ActualStart"] as string | undefined),
+    percentComplete: asNumber(task["PercentComplete"]),
+    cost: scaleCost(task["Cost"]),
+    actualCost: scaleCost(task["ActualCost"]),
+    remainingCost: scaleCost(task["RemainingCost"]),
+  }));
+}
+
+function aggregatePhaseCost(task: MsProjectTask, tasks: MsProjectTask[]): number | null {
+  if ((task.cost ?? 0) > 0) return task.cost;
+  if (!task.outlineNumber) return task.cost;
+
+  const prefix = `${task.outlineNumber}.`;
+  const descendants = tasks.filter((t) => t.outlineNumber.startsWith(prefix));
+  if (descendants.length === 0) return task.cost;
+
+  const directChildren = descendants.filter(
+    (t) => t.outlineLevel === task.outlineLevel + 1 && (t.cost ?? 0) > 0,
+  );
+  const directChildrenCost = directChildren.reduce((sum, t) => sum + (t.cost ?? 0), 0);
+  if (directChildrenCost > 0) return directChildrenCost;
+
+  const leafCost = descendants
+    .filter((t) => !t.isSummary && (t.cost ?? 0) > 0)
+    .reduce((sum, t) => sum + (t.cost ?? 0), 0);
+  if (leafCost > 0) return leafCost;
+
+  const maxDescendantCost = descendants.reduce(
+    (max, t) => Math.max(max, t.cost ?? 0),
+    0,
+  );
+  return maxDescendantCost > 0 ? maxDescendantCost : task.cost;
+}
+
 // MS Project XML stores costs as integers scaled by 10^CurrencyDigits.
 // CurrencyDigits is typically 2, so the integer "122910015242" represents
 // 1,229,100,152.42. Without this scaling the dashboard shows a number two
@@ -172,78 +231,65 @@ function parseMsProjectXml(xmlText: string, filename: string): ParsedContract {
       ? (t as Record<string, unknown>[])
       : [t as Record<string, unknown>];
   })();
+  const tasks = toMsProjectTasks(taskList, scaleCost);
 
-  const summaryTask = taskList.find(
-    (task) => task["OutlineLevel"] === "0" || task["OutlineLevel"] === 0,
+  const summaryTask = tasks.find(
+    (task) => task.outlineLevel === 0,
   );
   const rootTask =
-    taskList.find(
-      (task) => task["OutlineLevel"] === "1" || task["OutlineLevel"] === 1,
+    tasks.find(
+      (task) => task.outlineLevel === 1,
     ) ?? summaryTask;
 
   const nombre =
-    (rootTask?.["Name"] as string | undefined) ||
+    rootTask?.name ||
     title ||
     decodeName(projectName) ||
     decodeName(filename);
 
-  const presupuesto =
-    scaleCost(rootTask?.["Cost"]) ?? scaleCost(summaryTask?.["Cost"]);
-  const costoReal =
-    scaleCost(rootTask?.["ActualCost"]) ?? scaleCost(summaryTask?.["ActualCost"]);
+  const presupuesto = rootTask?.cost ?? summaryTask?.cost ?? null;
+  const costoReal = rootTask?.actualCost ?? summaryTask?.actualCost ?? null;
   const costoRestante =
-    scaleCost(rootTask?.["RemainingCost"]) ??
-    scaleCost(summaryTask?.["RemainingCost"]);
-  const porcentaje =
-    asNumber(rootTask?.["PercentComplete"]) ??
-    asNumber(summaryTask?.["PercentComplete"]);
+    rootTask?.remainingCost ??
+    summaryTask?.remainingCost ??
+    null;
+  const porcentaje = rootTask?.percentComplete ?? summaryTask?.percentComplete ?? null;
 
-  const fechaInicioReal = isoDate(
-    (rootTask?.["ActualStart"] as string | undefined) ??
-      (summaryTask?.["ActualStart"] as string | undefined),
-  );
+  const fechaInicioReal = rootTask?.actualStart ?? summaryTask?.actualStart ?? null;
 
-  const fechaInicio =
-    isoDate(rootTask?.["Start"] as string | undefined) ?? startDate;
-  const fechaFin =
-    isoDate(rootTask?.["Finish"] as string | undefined) ?? finishDate;
+  // Use contractual project window first, then task-derived dates.
+  const fechaInicio = startDate ?? rootTask?.start ?? summaryTask?.start ?? null;
+  const fechaFin = finishDate ?? rootTask?.finish ?? summaryTask?.finish ?? null;
 
-  const phaseTasks = taskList
+  const phaseTasks = tasks
     .filter((task) => {
-      const level = Number(task["OutlineLevel"] ?? 0);
-      const isSummary = task["Summary"] === "1" || task["Summary"] === 1;
-      return level === 2 && isSummary;
+      return task.outlineLevel === 2 && task.isSummary;
     })
     .slice(0, 50);
 
   const fases: ParsedPhase[] = phaseTasks.map((task, idx) => ({
-    nombre: cleanPhaseName(
-      (task["Name"] as string | undefined) ?? `Fase ${idx + 1}`,
-    ),
+    nombre: cleanPhaseName(task.name || `Fase ${idx + 1}`),
     sort_order: idx + 1,
-    fecha_inicio: isoDate(task["Start"] as string | undefined),
-    fecha_fin: isoDate(task["Finish"] as string | undefined),
-    porcentaje_completado: asNumber(task["PercentComplete"]),
-    costo: scaleCost(task["Cost"]),
+    fecha_inicio: task.start,
+    fecha_fin: task.finish,
+    porcentaje_completado: task.percentComplete,
+    costo: aggregatePhaseCost(task, tasks),
   }));
 
   if (fases.length === 0) {
-    const subtasks = taskList
+    const subtasks = tasks
       .filter((task) => {
-        const level = Number(task["OutlineLevel"] ?? 0);
-        return level >= 2 && level <= 3;
+        return task.outlineLevel >= 2 && task.outlineLevel <= 3;
       })
       .slice(0, 12);
     fases.push(
       ...subtasks.map((task, idx) => ({
-        nombre: cleanPhaseName(
-          (task["Name"] as string | undefined) ?? `Fase ${idx + 1}`,
-        ),
+        nombre: cleanPhaseName(task.name || `Fase ${idx + 1}`),
         sort_order: idx + 1,
-        fecha_inicio: isoDate(task["Start"] as string | undefined),
-        fecha_fin: isoDate(task["Finish"] as string | undefined),
-        porcentaje_completado: asNumber(task["PercentComplete"]),
-        costo: scaleCost(task["Cost"]),
+        fecha_inicio: task.start,
+        fecha_fin: task.finish,
+        porcentaje_completado: task.percentComplete,
+        costo: task.cost,
       })),
     );
   }
@@ -420,6 +466,112 @@ function parseMonetary(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function parseDateDMY(value: string): string | null {
+  const m = value.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  const day = Number(m[1]);
+  const month = Number(m[2]);
+  const year = Number(m[3]);
+  if (!Number.isFinite(day) || !Number.isFinite(month) || !Number.isFinite(year)) {
+    return null;
+  }
+  if (day < 1 || day > 31 || month < 1 || month > 12) return null;
+  const d = new Date(Date.UTC(year, month - 1, day));
+  return d.toISOString().slice(0, 10);
+}
+
+async function extractPdfText(file: File): Promise<string> {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const { getDocument, GlobalWorkerOptions } = pdfjs;
+  const data = new Uint8Array(await file.arrayBuffer());
+  if (typeof window !== "undefined") {
+    GlobalWorkerOptions.workerSrc = new URL(
+      "pdfjs-dist/build/pdf.worker.mjs",
+      import.meta.url,
+    ).toString();
+  }
+  const pdf = await getDocument({ data }).promise;
+
+  let text = "";
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
+    const page = await pdf.getPage(pageNum);
+    const content = await page.getTextContent();
+    for (const item of content.items as Array<{ str?: string; hasEOL?: boolean }>) {
+      if (!item?.str) continue;
+      text += item.str;
+      text += item.hasEOL ? "\n" : " ";
+    }
+    text += "\n";
+  }
+  return text;
+}
+
+function parseControlBudgetPdf(text: string, filename: string): ParsedContract {
+  const result = emptyResult(filename, "pdf");
+  const normalized = text
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+/g, " ");
+
+  const bacRaw =
+    normalized.match(/BAC\s*=\s*([0-9\.\,]+)\s*\$/i)?.[1] ??
+    normalized.match(/BAC\s*=\s*\$?\s*([0-9\.\,]+)/i)?.[1] ??
+    null;
+  const bac = bacRaw ? parseMonetary(bacRaw) : null;
+
+  const rowRegex =
+    /(?:^|\n)\s*(\d{1,2})\s+(\d{1,2}\/\d{1,2}\/\d{4})\s+\$\s*([0-9\.\,]+)\s+([0-9\.\,]+)\s*\$/gm;
+  type BudgetRow = {
+    week: number;
+    fecha: string;
+    cptp: number;
+    cptr: number;
+  };
+  const rows: BudgetRow[] = [];
+  let match: RegExpExecArray | null = null;
+  while ((match = rowRegex.exec(normalized)) !== null) {
+    const week = Number(match[1]);
+    const fecha = parseDateDMY(match[2]);
+    const cptp = parseMonetary(match[3]);
+    const cptr = parseMonetary(match[4]);
+    if (!fecha || cptp == null || cptr == null || !Number.isFinite(week)) continue;
+    rows.push({ week, fecha, cptp, cptr });
+  }
+
+  const rowsWithEV = rows.filter((r) => r.week > 0 && r.cptr > 0);
+  const latest = rowsWithEV.length > 0 ? rowsWithEV[rowsWithEV.length - 1] : null;
+  const pctFromEv =
+    bac != null && bac > 0 && latest ? (latest.cptr / bac) * 100 : null;
+
+  if (bac != null) {
+    result.presupuesto_total = bac;
+    result.moneda = "COP";
+  }
+  if (pctFromEv != null && Number.isFinite(pctFromEv)) {
+    result.porcentaje_completado = Math.max(0, Math.min(100, pctFromEv));
+    result.confidence = "alta";
+  } else if (bac != null) {
+    result.confidence = "media";
+  }
+  if (rows.length > 0) {
+    result.fecha_inicio_planeada = rows[0].fecha;
+    result.fecha_fin_planeada = rows[rows.length - 1].fecha;
+  }
+  if (latest) {
+    result.notas.push(
+      `Control presupuesto detectado: EV semana ${latest.week} = ${latest.cptr.toLocaleString("es-CO")} COP (${(pctFromEv ?? 0).toFixed(2)}%).`,
+    );
+  } else if (rows.length > 0) {
+    result.notas.push(
+      `Control presupuesto detectado con ${rows.length} filas semanales; sin EV acumulado válido.`,
+    );
+  } else {
+    result.notas.push(
+      "PDF detectado pero no se identificó la tabla de control de presupuesto.",
+    );
+  }
+  return result;
+}
+
 // Parses APU (Análisis de Precios Unitarios) markdown tables produced by
 // tableConvert. Structure: pipe-delimited rows where the first column is
 // the ITEM number ("1", "1.1", "1.1.1", …) or a totals label.
@@ -564,11 +716,16 @@ export async function parseContractFile(file: File): Promise<ParsedContract> {
   }
 
   if (ext === "pdf" || mime === "application/pdf") {
-    return parseFallback(
-      filename,
-      "pdf",
-      "Contrato PDF detectado. Completa los datos manualmente.",
-    );
+    try {
+      const text = await extractPdfText(file);
+      return parseControlBudgetPdf(text, filename);
+    } catch (err) {
+      return parseFallback(
+        filename,
+        "pdf",
+        `PDF detectado pero no pudimos extraer su contenido: ${(err as Error).message}`,
+      );
+    }
   }
 
   if (
@@ -596,10 +753,10 @@ export async function parseContractFile(file: File): Promise<ParsedContract> {
 const SOURCE_PRIORITY: Record<ContractSource, number> = {
   msproject_xml: 5,
   apu_markdown: 4,
+  pdf: 4,
   csv: 3,
   markdown: 2,
   docx: 1,
-  pdf: 1,
   image: 0,
   filename: 0,
 };
@@ -632,22 +789,42 @@ function mergePhases(results: ParsedContract[]): ParsedPhase[] {
     results.find((r) => r.source === "msproject_xml")?.fases ?? [];
   const apuPhases =
     results.find((r) => r.source === "apu_markdown")?.fases ?? [];
+  const pdfProgress = results.find((r) => r.source === "pdf")?.porcentaje_completado;
+
+  const applyPdfProgress = (phases: ParsedPhase[]): ParsedPhase[] => {
+    if (pdfProgress == null || !Number.isFinite(pdfProgress)) return phases;
+    return phases.map((ph) => ({
+      ...ph,
+      porcentaje_completado: pdfProgress,
+    }));
+  };
 
   if (xmlPhases.length === 0 && apuPhases.length === 0) {
     for (const r of results) {
-      if (r.fases.length > 0) return r.fases;
+      if (r.fases.length > 0) return applyPdfProgress(r.fases);
     }
     return [];
   }
 
-  if (xmlPhases.length === 0) return apuPhases;
-  if (apuPhases.length === 0) return xmlPhases;
+  if (xmlPhases.length === 0) return applyPdfProgress(apuPhases);
+  if (apuPhases.length === 0) return applyPdfProgress(xmlPhases);
 
   // Try to fuse: XML carries dates/% complete, APU carries cost.
-  return xmlPhases.map((xp, idx) => {
-    const match = apuPhases.find((ap) =>
-      similarName(ap.nombre, xp.nombre),
+  // Fallback to sort_order/index when names don't match.
+  const usedApuIndexes = new Set<number>();
+  const merged = xmlPhases.map((xp, idx) => {
+    let matchIndex = apuPhases.findIndex(
+      (ap, apIdx) =>
+        !usedApuIndexes.has(apIdx) && similarName(ap.nombre, xp.nombre),
     );
+    if (matchIndex < 0) {
+      const orderIdx = Math.max(0, (xp.sort_order ?? idx + 1) - 1);
+      if (orderIdx < apuPhases.length && !usedApuIndexes.has(orderIdx)) {
+        matchIndex = orderIdx;
+      }
+    }
+    if (matchIndex >= 0) usedApuIndexes.add(matchIndex);
+    const match = matchIndex >= 0 ? apuPhases[matchIndex] : null;
     return {
       nombre: xp.nombre,
       sort_order: xp.sort_order ?? idx + 1,
@@ -657,6 +834,7 @@ function mergePhases(results: ParsedContract[]): ParsedPhase[] {
       costo: match?.costo ?? xp.costo,
     } satisfies ParsedPhase;
   });
+  return applyPdfProgress(merged);
 }
 
 function similarName(a: string, b: string): boolean {
@@ -692,7 +870,7 @@ export async function parseContractFiles(
   const moneda = bestForField(parsed, ["msproject_xml", "apu_markdown", "csv"], (r) => r.moneda);
   const costoReal = bestForField(parsed, ["msproject_xml"], (r) => r.costo_real);
   const costoRestante = bestForField(parsed, ["msproject_xml"], (r) => r.costo_restante);
-  const porcentaje = bestForField(parsed, ["msproject_xml"], (r) => r.porcentaje_completado);
+  const porcentaje = bestForField(parsed, ["pdf", "msproject_xml"], (r) => r.porcentaje_completado);
 
   const fases = mergePhases(parsed);
   const notas: string[] = [];

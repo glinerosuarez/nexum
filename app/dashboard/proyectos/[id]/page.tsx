@@ -6,7 +6,9 @@ import {
   CircleAlert,
   Gauge,
   PackageSearch,
+  Siren,
   TrendingUp,
+  TriangleAlert,
   Wallet,
 } from "lucide-react";
 import { Topbar } from "@/components/dashboard/Topbar";
@@ -34,13 +36,19 @@ export default async function ProjectDashboard({
   const { id: projectId } = await params;
   const { created } = await searchParams;
   const data = await getDashboardData(projectId);
-  const { project, totals, alerts, topCriticalSupplies, curva } = data;
+  const { project, totals, alerts, topCriticalSupplies, curva, priceRisk } = data;
 
   const cpiTone = project?.cpi == null ? "neutral" : project.cpi >= 1 ? "ok" : project.cpi >= 0.9 ? "warn" : "risk";
   const spiTone = project?.spi == null ? "neutral" : project.spi >= 1 ? "ok" : project.spi >= 0.9 ? "warn" : "risk";
   const consumido = totals.presupuesto_total > 0
     ? (totals.gasto_ejecutado / totals.presupuesto_total) * 100
     : 0;
+  const overrunTone =
+    priceRisk.severity === "critical"
+      ? "risk"
+      : priceRisk.severity === "warn"
+        ? "warn"
+        : "ok";
 
   return (
     <>
@@ -159,6 +167,123 @@ export default async function ProjectDashboard({
               tone: totals.incidentes_abiertos > 0 ? "warn" : "ok",
             }}
           />
+        </section>
+
+        <section aria-label="Riesgo por variación de precios" className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-display text-2xl text-ink">
+                Riesgo por variación de precios
+              </h2>
+              <p className="text-sm text-ink-soft">
+                Compara precios monitoreados contra APU de onboarding.
+              </p>
+            </div>
+          </div>
+
+          <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <KPICard
+              label="Sobrecosto proyectado"
+              value={fmtCOP(priceRisk.projectedAdditionalCost)}
+              hint="Impacto adicional por alzas detectadas"
+              icon={TriangleAlert}
+              delta={{
+                value: `${fmtPercent(priceRisk.projectedOverrunPercent, { decimals: 1 })} del presupuesto`,
+                tone: overrunTone,
+              }}
+            />
+            <KPICard
+              label="Presupuesto proyectado"
+              value={fmtCOP(priceRisk.projectedBudget)}
+              hint="Presupuesto APU + sobrecosto por insumos"
+              icon={Wallet}
+            />
+            <KPICard
+              label="Insumos en riesgo"
+              value={String(priceRisk.suppliesAtRisk)}
+              hint={`${priceRisk.criticalSupplies} críticos por alza >=10%`}
+              icon={Siren}
+              delta={{
+                value: `${String(priceRisk.changedSupplies)} con cambio de precio`,
+                tone: overrunTone,
+              }}
+            />
+            <KPICard
+              label="Última carga"
+              value={priceRisk.lastUpdateDate ? fmtDate(priceRisk.lastUpdateDate) : "—"}
+              hint={priceRisk.hasPriceUpdates
+                ? `Base afectada ${fmtCOPCompact(priceRisk.affectedBudget)}`
+                : "Aún no hay lotes cargados"}
+              icon={TrendingUp}
+            />
+          </section>
+
+          <article className="overflow-hidden rounded-2xl border border-line bg-canvas-raised">
+            <header className="flex items-center justify-between gap-3 border-b border-line px-5 py-4">
+              <div>
+                <h3 className="font-display text-xl text-ink">Insumos con mayor impacto</h3>
+                <p className="mt-0.5 text-xs text-ink-soft">
+                  Proyección considerando cantidad planeada del APU.
+                </p>
+              </div>
+            </header>
+            {priceRisk.topImpacts.length === 0 ? (
+              <p className="px-5 py-10 text-center text-sm text-ink-muted">
+                No hay alzas detectadas con impacto presupuestal.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[900px] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-line text-[11px] font-medium uppercase tracking-[0.12em] text-ink-soft">
+                      <th scope="col" className="px-5 py-3">Insumo</th>
+                      <th scope="col" className="px-5 py-3 text-right">Precio base</th>
+                      <th scope="col" className="px-5 py-3 text-right">Precio actual</th>
+                      <th scope="col" className="px-5 py-3 text-right">Variación</th>
+                      <th scope="col" className="px-5 py-3 text-right">Impacto</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {priceRisk.topImpacts.map((row) => (
+                      <tr
+                        key={row.supply_id}
+                        className="border-b border-line/70 transition-colors hover:bg-ink/[0.02]"
+                      >
+                        <td className="px-5 py-3.5">
+                          <p className="font-medium text-ink">{row.nombre}</p>
+                          <p className="text-[11px] text-ink-soft">
+                            {row.tipo} · {fmtNumber(row.cantidad_planeada_total)} {row.unidad_medida}
+                          </p>
+                        </td>
+                        <td className="px-5 py-3.5 text-right font-mono text-ink">
+                          {fmtCOP(row.baseline_unit_price)}
+                        </td>
+                        <td className="px-5 py-3.5 text-right font-mono text-ink">
+                          {fmtCOP(row.current_unit_price)}
+                        </td>
+                        <td className="px-5 py-3.5 text-right">
+                          <span
+                            className={`rounded-full px-2 py-1 text-[11px] font-medium ${
+                              row.severity === "critical"
+                                ? "bg-status-risk/10 text-status-risk"
+                                : row.severity === "warn"
+                                  ? "bg-status-warn/10 text-status-warn"
+                                  : "bg-status-ok/10 text-status-ok"
+                            }`}
+                          >
+                            {fmtPercent(row.unit_price_change_pct, { decimals: 1 })}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3.5 text-right font-mono text-status-risk">
+                          {fmtCOP(row.impact_amount)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </article>
         </section>
 
         <ProjectionCurve data={curva} />

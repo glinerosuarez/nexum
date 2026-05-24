@@ -21,6 +21,11 @@ export interface SupplyRow {
   tipo: string;
   unidad_medida: string;
   precio_referencia: number;
+  precio_actual: number;
+  variacion_precio_abs: number;
+  variacion_precio_pct: number;
+  tiene_actualizacion_precio: boolean;
+  fecha_precio_actualizacion: string | null;
   disponibilidad: "disponible" | "escaso" | "agotado" | "descontinuado";
   es_critico: boolean;
   exposicion_presupuestal: number;
@@ -76,9 +81,40 @@ export interface DashboardData {
     saldo_por_pagar: number;
     nomina_pagada: number;
   };
+  priceRisk: PriceRiskSummary;
   alerts: CriticalAlertRow[];
   topCriticalSupplies: SupplyRow[];
   curva: CurveData | null;
+}
+
+export interface PriceRiskRow {
+  supply_id: string;
+  nombre: string;
+  tipo: string;
+  unidad_medida: string;
+  cantidad_planeada_total: number;
+  baseline_unit_price: number;
+  current_unit_price: number;
+  unit_price_change_pct: number;
+  baseline_amount: number;
+  projected_amount: number;
+  impact_amount: number;
+  severity: "ok" | "warn" | "critical";
+}
+
+export interface PriceRiskSummary {
+  hasPriceUpdates: boolean;
+  lastUpdateDate: string | null;
+  changedSupplies: number;
+  suppliesAtRisk: number;
+  criticalSupplies: number;
+  affectedBudget: number;
+  projectedAdditionalCost: number;
+  projectedBudget: number;
+  projectedOverrunAmount: number;
+  projectedOverrunPercent: number;
+  severity: "ok" | "warn" | "critical";
+  topImpacts: PriceRiskRow[];
 }
 
 export interface ProjectListRow {
@@ -105,6 +141,11 @@ interface SupplyAggregations {
   cantidadEjecutada: Map<string, number>;
   proyectosPorSupply: Map<string, Set<string>>;
   ordenesPendientesPorSupply: Map<string, number>;
+}
+
+interface LatestSupplyPrice {
+  unitPrice: number;
+  observedAt: string;
 }
 
 async function getSupplyAggregations(): Promise<SupplyAggregations> {
@@ -221,6 +262,69 @@ async function getSupplyAggregations(): Promise<SupplyAggregations> {
   };
 }
 
+async function getLatestSupplyPrices(): Promise<Map<string, LatestSupplyPrice>> {
+  const supabase = await createSupabaseServerClient();
+  const latestBySupply = new Map<string, LatestSupplyPrice>();
+
+  const { data } = await supabase
+    .from("supply_price_update_rows")
+    .select(
+      "supply_id, unit_price, created_at, supply_price_update_batches!inner(observed_at, created_at)",
+    )
+    .eq("status", "matched")
+    .not("supply_id", "is", null)
+    .limit(5000);
+
+  type PriceRow = {
+    supply_id: string | null;
+    unit_price: number | string;
+    created_at: string;
+    supply_price_update_batches:
+      | { observed_at: string; created_at: string }
+      | { observed_at: string; created_at: string }[]
+      | null;
+  };
+
+  const sorted = ((data ?? []) as PriceRow[])
+    .map((row) => {
+      const batchField = Array.isArray(row.supply_price_update_batches)
+        ? row.supply_price_update_batches[0]
+        : row.supply_price_update_batches;
+      return {
+        supplyId: row.supply_id,
+        unitPrice: toNumber(row.unit_price),
+        observedAt: batchField?.observed_at ?? null,
+        batchCreatedAt: batchField?.created_at ?? null,
+        rowCreatedAt: row.created_at,
+      };
+    })
+    .filter((row) => row.supplyId && row.observedAt)
+    .sort((a, b) => {
+      const aObserved = new Date(a.observedAt!).getTime();
+      const bObserved = new Date(b.observedAt!).getTime();
+      if (aObserved !== bObserved) return bObserved - aObserved;
+
+      const aBatch = new Date(a.batchCreatedAt ?? 0).getTime();
+      const bBatch = new Date(b.batchCreatedAt ?? 0).getTime();
+      if (aBatch !== bBatch) return bBatch - aBatch;
+
+      const aRow = new Date(a.rowCreatedAt).getTime();
+      const bRow = new Date(b.rowCreatedAt).getTime();
+      return bRow - aRow;
+    });
+
+  for (const row of sorted) {
+    if (!row.supplyId || !row.observedAt) continue;
+    if (latestBySupply.has(row.supplyId)) continue;
+    latestBySupply.set(row.supplyId, {
+      unitPrice: row.unitPrice,
+      observedAt: row.observedAt,
+    });
+  }
+
+  return latestBySupply;
+}
+
 export async function getDashboardData(projectId?: string): Promise<DashboardData> {
   const supabase = await createSupabaseServerClient();
 
@@ -251,6 +355,7 @@ export async function getDashboardData(projectId?: string): Promise<DashboardDat
   }
 
   const agg = await getSupplyAggregations();
+  const latestSupplyPrices = await getLatestSupplyPrices();
 
   const { data: supplyRows } = await supabase
     .from("supply_catalog")
@@ -259,20 +364,33 @@ export async function getDashboardData(projectId?: string): Promise<DashboardDat
     )
     .eq("activo", true);
 
-  const supplies: SupplyRow[] = (supplyRows ?? []).map((s) => ({
-    id: s.id,
-    nombre: s.nombre,
-    tipo: s.tipo,
-    unidad_medida: s.unidad_medida,
-    precio_referencia: toNumber(s.precio_referencia),
-    disponibilidad: s.disponibilidad,
-    es_critico: s.es_critico,
-    exposicion_presupuestal: agg.exposicionPorSupply.get(s.id) ?? 0,
-    cantidad_planeada_total: agg.cantidadPlaneada.get(s.id) ?? 0,
-    cantidad_ejecutada_total: agg.cantidadEjecutada.get(s.id) ?? 0,
-    ordenes_pendientes: agg.ordenesPendientesPorSupply.get(s.id) ?? 0,
-    proyectos_impactados: agg.proyectosPorSupply.get(s.id)?.size ?? 0,
-  }));
+  const supplies: SupplyRow[] = (supplyRows ?? []).map((s) => {
+    const ref = toNumber(s.precio_referencia);
+    const latest = latestSupplyPrices.get(s.id);
+    const precioActual = latest?.unitPrice ?? ref;
+    const variacionAbs = precioActual - ref;
+    const variacionPct = ref > 0 ? (variacionAbs / ref) * 100 : 0;
+
+    return {
+      id: s.id,
+      nombre: s.nombre,
+      tipo: s.tipo,
+      unidad_medida: s.unidad_medida,
+      precio_referencia: ref,
+      precio_actual: precioActual,
+      variacion_precio_abs: variacionAbs,
+      variacion_precio_pct: variacionPct,
+      tiene_actualizacion_precio: Boolean(latest),
+      fecha_precio_actualizacion: latest?.observedAt ?? null,
+      disponibilidad: s.disponibilidad,
+      es_critico: s.es_critico,
+      exposicion_presupuestal: agg.exposicionPorSupply.get(s.id) ?? 0,
+      cantidad_planeada_total: agg.cantidadPlaneada.get(s.id) ?? 0,
+      cantidad_ejecutada_total: agg.cantidadEjecutada.get(s.id) ?? 0,
+      ordenes_pendientes: agg.ordenesPendientesPorSupply.get(s.id) ?? 0,
+      proyectos_impactados: agg.proyectosPorSupply.get(s.id)?.size ?? 0,
+    };
+  });
 
   const { data: alertRows } = await supabase
     .from("supply_availability_alerts")
@@ -425,6 +543,86 @@ export async function getDashboardData(projectId?: string): Promise<DashboardDat
   const totalsPresupuesto = project?.presupuesto_total ?? 0;
   const totalsGasto = project?.gasto_ejecutado ?? 0;
 
+  const priceRiskRows: PriceRiskRow[] = supplies
+    .map((s) => {
+      const qty = s.cantidad_planeada_total;
+      if (qty <= 0 || !s.tiene_actualizacion_precio) return null;
+
+      const baselineAmount = s.exposicion_presupuestal;
+      const baselineUnitPrice = baselineAmount > 0
+        ? baselineAmount / qty
+        : s.precio_referencia;
+      const currentUnitPrice = s.precio_actual;
+      const projectedAmount = qty * currentUnitPrice;
+      const impact = projectedAmount - baselineAmount;
+      const unitChangePct = baselineUnitPrice > 0
+        ? ((currentUnitPrice - baselineUnitPrice) / baselineUnitPrice) * 100
+        : 0;
+
+      let severity: PriceRiskRow["severity"] = "ok";
+      if (unitChangePct >= 10) severity = "critical";
+      else if (unitChangePct >= 5) severity = "warn";
+
+      return {
+        supply_id: s.id,
+        nombre: s.nombre,
+        tipo: s.tipo,
+        unidad_medida: s.unidad_medida,
+        cantidad_planeada_total: qty,
+        baseline_unit_price: baselineUnitPrice,
+        current_unit_price: currentUnitPrice,
+        unit_price_change_pct: unitChangePct,
+        baseline_amount: baselineAmount,
+        projected_amount: projectedAmount,
+        impact_amount: impact,
+        severity,
+      };
+    })
+    .filter((row): row is PriceRiskRow => Boolean(row))
+    .sort((a, b) => b.impact_amount - a.impact_amount);
+
+  const rowsAtRisk = priceRiskRows.filter((row) => row.impact_amount > 0);
+  const projectedAdditionalCost = rowsAtRisk.reduce(
+    (acc, row) => acc + row.impact_amount,
+    0,
+  );
+  const projectedBudget = totalsPresupuesto + projectedAdditionalCost;
+  const projectedOverrunAmount = Math.max(projectedBudget - totalsPresupuesto, 0);
+  const projectedOverrunPercent = totalsPresupuesto > 0
+    ? (projectedOverrunAmount / totalsPresupuesto) * 100
+    : 0;
+  const affectedBudget = rowsAtRisk.reduce((acc, row) => acc + row.baseline_amount, 0);
+  const lastUpdateDate = supplies
+    .map((s) => s.fecha_precio_actualizacion)
+    .filter((v): v is string => Boolean(v))
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null;
+
+  const criticalSupplies = rowsAtRisk.filter((row) => row.severity === "critical").length;
+  const warnSupplies = rowsAtRisk.filter((row) => row.severity === "warn").length;
+  const priceRiskSeverity: PriceRiskSummary["severity"] =
+    criticalSupplies > 0
+      ? "critical"
+      : warnSupplies > 0
+        ? "warn"
+        : "ok";
+
+  const priceRisk: PriceRiskSummary = {
+    hasPriceUpdates: supplies.some((s) => s.tiene_actualizacion_precio),
+    lastUpdateDate,
+    changedSupplies: priceRiskRows.filter(
+      (row) => Math.abs(row.unit_price_change_pct) >= 0.1,
+    ).length,
+    suppliesAtRisk: rowsAtRisk.length,
+    criticalSupplies,
+    affectedBudget,
+    projectedAdditionalCost,
+    projectedBudget,
+    projectedOverrunAmount,
+    projectedOverrunPercent,
+    severity: priceRiskSeverity,
+    topImpacts: rowsAtRisk.slice(0, 8),
+  };
+
   return {
     project,
     totals: {
@@ -438,6 +636,7 @@ export async function getDashboardData(projectId?: string): Promise<DashboardDat
       saldo_por_pagar: saldoPorPagar,
       nomina_pagada: nominaPagada,
     },
+    priceRisk,
     alerts,
     topCriticalSupplies,
     curva,
@@ -447,6 +646,7 @@ export async function getDashboardData(projectId?: string): Promise<DashboardDat
 export async function getAllSupplies(): Promise<SupplyRow[]> {
   const supabase = await createSupabaseServerClient();
   const agg = await getSupplyAggregations();
+  const latestSupplyPrices = await getLatestSupplyPrices();
 
   const { data: rows } = await supabase
     .from("supply_catalog")
@@ -457,20 +657,148 @@ export async function getAllSupplies(): Promise<SupplyRow[]> {
     .order("es_critico", { ascending: false })
     .order("nombre", { ascending: true });
 
-  return (rows ?? []).map((s) => ({
-    id: s.id,
-    nombre: s.nombre,
-    tipo: s.tipo,
-    unidad_medida: s.unidad_medida,
-    precio_referencia: toNumber(s.precio_referencia),
-    disponibilidad: s.disponibilidad,
-    es_critico: s.es_critico,
-    exposicion_presupuestal: agg.exposicionPorSupply.get(s.id) ?? 0,
-    cantidad_planeada_total: agg.cantidadPlaneada.get(s.id) ?? 0,
-    cantidad_ejecutada_total: agg.cantidadEjecutada.get(s.id) ?? 0,
-    ordenes_pendientes: agg.ordenesPendientesPorSupply.get(s.id) ?? 0,
-    proyectos_impactados: agg.proyectosPorSupply.get(s.id)?.size ?? 0,
-  }));
+  return (rows ?? []).map((s) => {
+    const ref = toNumber(s.precio_referencia);
+    const latest = latestSupplyPrices.get(s.id);
+    const precioActual = latest?.unitPrice ?? ref;
+    const variacionAbs = precioActual - ref;
+    const variacionPct = ref > 0 ? (variacionAbs / ref) * 100 : 0;
+
+    return {
+      id: s.id,
+      nombre: s.nombre,
+      tipo: s.tipo,
+      unidad_medida: s.unidad_medida,
+      precio_referencia: ref,
+      precio_actual: precioActual,
+      variacion_precio_abs: variacionAbs,
+      variacion_precio_pct: variacionPct,
+      tiene_actualizacion_precio: Boolean(latest),
+      fecha_precio_actualizacion: latest?.observedAt ?? null,
+      disponibilidad: s.disponibilidad,
+      es_critico: s.es_critico,
+      exposicion_presupuestal: agg.exposicionPorSupply.get(s.id) ?? 0,
+      cantidad_planeada_total: agg.cantidadPlaneada.get(s.id) ?? 0,
+      cantidad_ejecutada_total: agg.cantidadEjecutada.get(s.id) ?? 0,
+      ordenes_pendientes: agg.ordenesPendientesPorSupply.get(s.id) ?? 0,
+      proyectos_impactados: agg.proyectosPorSupply.get(s.id)?.size ?? 0,
+    };
+  });
+}
+
+export interface PriceBatchListRow {
+  id: string;
+  source_file_name: string;
+  observed_at: string;
+  created_at: string;
+  total_rows: number;
+  matched_rows: number;
+  unmatched_rows: number;
+}
+
+export async function getRecentPriceBatches(limit = 12): Promise<PriceBatchListRow[]> {
+  const supabase = await createSupabaseServerClient();
+
+  const { data: batches } = await supabase
+    .from("supply_price_update_batches")
+    .select("id, source_file_name, observed_at, created_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (!batches || batches.length === 0) return [];
+
+  const batchIds = batches.map((b) => b.id);
+  const { data: rows } = await supabase
+    .from("supply_price_update_rows")
+    .select("batch_id, status")
+    .in("batch_id", batchIds);
+
+  const stats = new Map<string, { total: number; matched: number; unmatched: number }>();
+
+  for (const row of rows ?? []) {
+    const prev = stats.get(row.batch_id) ?? { total: 0, matched: 0, unmatched: 0 };
+    prev.total += 1;
+    if (row.status === "matched") prev.matched += 1;
+    if (row.status === "unmatched") prev.unmatched += 1;
+    stats.set(row.batch_id, prev);
+  }
+
+  return batches.map((batch) => {
+    const st = stats.get(batch.id) ?? { total: 0, matched: 0, unmatched: 0 };
+    return {
+      id: batch.id,
+      source_file_name: batch.source_file_name,
+      observed_at: batch.observed_at,
+      created_at: batch.created_at,
+      total_rows: st.total,
+      matched_rows: st.matched,
+      unmatched_rows: st.unmatched,
+    };
+  });
+}
+
+export interface AgentOverrunSnapshot {
+  project_id: string;
+  project_nombre: string;
+  last_run_id: string | null;
+  last_run_mode: string | null;
+  last_run_status: string | null;
+  last_run_started_at: string | null;
+  last_run_finished_at: string | null;
+  supplies_targeted: number;
+  supplies_scraped_ok: number;
+  supplies_scraped_failed: number;
+  forecast_points_written: number;
+  alerts_triggered: number;
+  error_summary: string | null;
+  last_alert_id: string | null;
+  last_alert_severity: string | null;
+  last_alert_status: string | null;
+  last_alert_triggered_at: string | null;
+  baseline_budget: number;
+  projected_total_cost: number;
+  overrun_amount: number;
+  overrun_pct: number;
+  threshold_pct: number;
+}
+
+export async function getAgentOverrunSnapshot(
+  projectId: string,
+): Promise<AgentOverrunSnapshot | null> {
+  const supabase = await createSupabaseServerClient();
+
+  const { data, error } = await supabase
+    .from("agent_overrun_snapshot")
+    .select("*")
+    .eq("project_id", projectId)
+    .maybeSingle();
+
+  if (error || !data || !data.project_id || !data.project_nombre) return null;
+
+  return {
+    project_id: data.project_id,
+    project_nombre: data.project_nombre,
+    last_run_id: data.last_run_id,
+    last_run_mode: data.last_run_mode,
+    last_run_status: data.last_run_status,
+    last_run_started_at: data.last_run_started_at,
+    last_run_finished_at: data.last_run_finished_at,
+    supplies_targeted: toNumber(data.supplies_targeted, 0),
+    supplies_scraped_ok: toNumber(data.supplies_scraped_ok, 0),
+    supplies_scraped_failed: toNumber(data.supplies_scraped_failed, 0),
+    forecast_points_written: toNumber(data.forecast_points_written, 0),
+    alerts_triggered: toNumber(data.alerts_triggered, 0),
+    error_summary: data.error_summary,
+    last_alert_id: data.last_alert_id,
+    last_alert_severity: data.last_alert_severity,
+    last_alert_status: data.last_alert_status,
+    last_alert_triggered_at: data.last_alert_triggered_at,
+    baseline_budget: toNumber(data.baseline_budget, 0),
+    projected_total_cost: toNumber(data.projected_total_cost, 0),
+    overrun_amount: toNumber(data.overrun_amount, 0),
+    overrun_pct: toNumber(data.overrun_pct, 0),
+    threshold_pct: toNumber(data.threshold_pct, 0),
+  };
 }
 
 export interface CostsData {

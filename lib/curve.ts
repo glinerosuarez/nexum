@@ -114,7 +114,7 @@ export function buildProjectionCurve(opts: {
 
   // If no phase dates, distribute the whole budget linearly across the
   // project window using a single synthetic phase.
-  const effectivePhases: CurvePhaseInput[] =
+  let effectivePhases: CurvePhaseInput[] =
     phasesWithDates.length > 0
       ? phasesWithDates
       : [
@@ -127,6 +127,23 @@ export function buildProjectionCurve(opts: {
             porcentaje_completado: 0,
           },
         ];
+
+  // Keep CPTP aligned with contractual total budget even when imported
+  // phase costs are incomplete or come from a different source split.
+  const phaseBudgetSum = effectivePhases.reduce(
+    (sum, p) => sum + Math.max(0, p.costo_planeado),
+    0,
+  );
+  if (phaseBudgetSum > 0 && totalBudget > 0) {
+    const driftRatio = Math.abs(phaseBudgetSum - totalBudget) / totalBudget;
+    if (driftRatio > 0.02) {
+      const scale = totalBudget / phaseBudgetSum;
+      effectivePhases = effectivePhases.map((p) => ({
+        ...p,
+        costo_planeado: p.costo_planeado * scale,
+      }));
+    }
+  }
 
   // Build monthly buckets between start and end (inclusive).
   const buckets: { monthStart: Date; monthEnd: Date }[] = [];
@@ -196,6 +213,11 @@ export function buildProjectionCurve(opts: {
       acwp: Math.round(cumAcwp),
       futuro: b.monthEnd > today,
     });
+  }
+
+  if (points.length > 0) {
+    // Force the final point to close at total budget.
+    points[points.length - 1].cptp = Math.round(totalBudget);
   }
 
   const lastPastIdx = (() => {
