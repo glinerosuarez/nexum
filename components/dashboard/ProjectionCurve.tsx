@@ -289,11 +289,18 @@ function makeXTicks(
   const ticks: { iso: string; label: string }[] = [];
   for (let i = 0; i < points.length; i += stride) {
     const d = new Date(points[i].fecha);
-    ticks.push({ iso: points[i].fecha, label: labels.format(d) });
+    const next = { iso: points[i].fecha, label: labels.format(d) };
+    const prev = ticks[ticks.length - 1];
+    // Avoid overlapping duplicate month labels (e.g. two points in "may 26").
+    if (prev?.label === next.label) ticks[ticks.length - 1] = next;
+    else ticks.push(next);
   }
   const last = points[points.length - 1];
+  const lastLabel = labels.format(new Date(last.fecha));
   if (ticks[ticks.length - 1]?.iso !== last.fecha) {
-    ticks.push({ iso: last.fecha, label: labels.format(new Date(last.fecha)) });
+    const prev = ticks[ticks.length - 1];
+    if (prev?.label === lastLabel) ticks[ticks.length - 1] = { iso: last.fecha, label: lastLabel };
+    else ticks.push({ iso: last.fecha, label: lastLabel });
   }
   return ticks;
 }
