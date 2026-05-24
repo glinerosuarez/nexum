@@ -311,20 +311,30 @@ export function NewProjectWizard() {
 function CreateSubmit() {
   const { pending } = useFormStatus();
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-ink px-6 text-sm font-medium text-canvas transition-colors hover:bg-[#1a1a1c] disabled:cursor-not-allowed disabled:opacity-50"
-    >
+    <div className="flex flex-col items-end gap-1.5">
+      <button
+        type="submit"
+        disabled={pending}
+        className="inline-flex h-11 items-center justify-center gap-2 rounded-full bg-ink px-6 text-sm font-medium text-canvas transition-colors hover:bg-[#1a1a1c] disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {pending ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            Llamando al agente de insumos críticos...
+          </>
+        ) : (
+          <>
+            Crear proyecto
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          </>
+        )}
+      </button>
       {pending ? (
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-      ) : (
-        <>
-          Crear proyecto
-          <ArrowRight className="h-4 w-4" aria-hidden="true" />
-        </>
-      )}
-    </button>
+        <p className="text-xs text-ink-soft">
+          Esto puede tomar unos segundos mientras se calcula el riesgo de costos.
+        </p>
+      ) : null}
+    </div>
   );
 }
 

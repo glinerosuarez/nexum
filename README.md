@@ -64,6 +64,37 @@ Estilo minimalista, premium y técnico:
 
 Ver `.env.example`. Ninguna variable es obligatoria para que el sitio compile; solo se documentan para el correo de contacto y analítica opcional.
 
+### Edge Function `run_supply_cost_agent` (Supabase)
+
+La función `supabase/functions/run_supply_cost_agent` ya soporta dos modos:
+
+- `phase2_remote_mcp`: invoca el agente desplegado en MCP/Cloud Run.
+- `phase1_skeleton`: fallback local (stubs) si no hay endpoint configurado.
+
+Variables recomendadas para producción demo (en Supabase Function Secrets):
+
+```bash
+SUPPLY_AGENT_MCP_URL=https://<cloud-run-service>.run.app/mcp
+SUPPLY_AGENT_USER_ID=<uuid-del-usuario-con-acceso-al-proyecto>
+SUPPLY_AGENT_MCP_REQUIRED=true
+SUPPLY_AGENT_MCP_TIMEOUT_MS=90000
+# opcional si el endpoint requiere bearer
+SUPPLY_AGENT_MCP_BEARER=<token>
+```
+
+Payload de ejemplo:
+
+```json
+{
+  "project_id": "<project-uuid>",
+  "mode": "manual",
+  "dry_run": false,
+  "horizon_months": 6,
+  "history_months": 36,
+  "overrun_threshold_pct": 10
+}
+```
+
 ## Despliegue en Vercel (5 pasos)
 
 1. Sube el repositorio a GitHub/GitLab/Bitbucket.
