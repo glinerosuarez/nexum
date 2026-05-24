@@ -64,6 +64,30 @@ Estilo minimalista, premium y técnico:
 
 Ver `.env.example`. Ninguna variable es obligatoria para que el sitio compile; solo se documentan para el correo de contacto y analítica opcional.
 
+### Chat con datos (LLM barato)
+
+El chat de proyecto soporta endpoint OpenAI y endpoint OpenAI-compatible en Google Cloud.
+
+Config por defecto (OpenAI):
+
+```bash
+OPENAI_MODEL=gpt-4.1-nano
+OPENAI_API_KEY=...
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_PATH=/responses
+OPENAI_USE_CHAT_COMPLETIONS=false
+```
+
+Config en Google Cloud Vertex AI (OpenAI-compatible):
+
+```bash
+OPENAI_MODEL=google/gemini-2.5-flash-lite
+OPENAI_API_KEY=<bearer-token>
+OPENAI_BASE_URL=https://aiplatform.googleapis.com/v1/projects/<PROJECT_ID>/locations/global/endpoints/openapi
+OPENAI_API_PATH=/chat/completions
+OPENAI_USE_CHAT_COMPLETIONS=true
+```
+
 ### Edge Function `run_supply_cost_agent` (Supabase)
 
 La función `supabase/functions/run_supply_cost_agent` ya soporta dos modos:

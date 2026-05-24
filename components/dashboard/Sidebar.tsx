@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   FolderKanban,
   LayoutDashboard,
+  MessageSquare,
   PackageSearch,
   Plus,
   Wallet,
@@ -60,6 +61,12 @@ export function Sidebar() {
           label: "Costos",
           icon: Wallet,
           description: "Presupuesto y gasto",
+        },
+        {
+          href: `/dashboard/proyectos/${currentProjectId}/chat`,
+          label: "Chat",
+          icon: MessageSquare,
+          description: "Consulta tus datos",
         },
       ]
     : [];
@@ -155,7 +162,7 @@ export function Sidebar() {
         ) : (
           <section className="border-t border-line p-3">
             <div className="rounded-xl border border-dashed border-line bg-canvas p-3 text-xs text-ink-soft">
-              Selecciona un proyecto desde la cartera para ver su vista ejecutiva, insumos críticos y costos.
+              Selecciona un proyecto desde la cartera para ver su vista ejecutiva, insumos críticos, costos y chat.
             </div>
           </section>
         )}

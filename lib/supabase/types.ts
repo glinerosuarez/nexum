@@ -79,6 +79,34 @@ export type Database = {
         Update: Record<string, unknown>;
         Relationships: [];
       };
+      project_chat_messages: {
+        Row: {
+          content: string;
+          created_at: string;
+          id: string;
+          metadata: Json;
+          project_id: string;
+          role: string;
+          session_id: string;
+        };
+        Insert: Record<string, unknown>;
+        Update: Record<string, unknown>;
+        Relationships: [];
+      };
+      project_chat_sessions: {
+        Row: {
+          created_at: string;
+          created_by: string | null;
+          id: string;
+          last_message_at: string;
+          project_id: string;
+          title: string | null;
+          updated_at: string;
+        };
+        Insert: Record<string, unknown>;
+        Update: Record<string, unknown>;
+        Relationships: [];
+      };
       project_memberships: {
         Row: {
           active: boolean;
