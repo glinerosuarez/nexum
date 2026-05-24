@@ -3,7 +3,6 @@ import {
   AlertOctagon,
   ArrowUpRight,
   Banknote,
-  Bot,
   CircleAlert,
   Gauge,
   PackageSearch,
@@ -20,7 +19,7 @@ import {
   AvailabilityBadge,
   SupplyTypeBadge,
 } from "@/components/dashboard/SupplyBadges";
-import { getAgentOverrunSnapshot, getDashboardData } from "@/lib/dashboard-data";
+import { getDashboardData } from "@/lib/dashboard-data";
 import { fmtCOP, fmtCOPCompact, fmtDate, fmtNumber, fmtPercent } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -37,7 +36,6 @@ export default async function ProjectDashboard({
   const { id: projectId } = await params;
   const { created } = await searchParams;
   const data = await getDashboardData(projectId);
-  const agentSnapshot = await getAgentOverrunSnapshot(projectId);
   const { project, totals, alerts, topCriticalSupplies, curva, priceRisk } = data;
 
   const cpiTone = project?.cpi == null ? "neutral" : project.cpi >= 1 ? "ok" : project.cpi >= 0.9 ? "warn" : "risk";
@@ -76,80 +74,6 @@ export default async function ProjectDashboard({
             Proyecto creado correctamente.
           </div>
         ) : null}
-
-        <section className="rounded-2xl border border-line bg-canvas-raised">
-          <header className="flex items-center justify-between border-b border-line px-5 py-4">
-            <div>
-              <h2 className="font-display text-xl text-ink">Agente de insumos críticos</h2>
-              <p className="mt-0.5 text-xs text-ink-soft">
-                Monitoreo automático de precios, forecast y alerta de sobrecostos.
-              </p>
-            </div>
-            <span className="inline-flex items-center gap-1 rounded-full bg-ink/5 px-2.5 py-1 text-[11px] text-ink-soft">
-              <Bot className="h-3.5 w-3.5" aria-hidden="true" />
-              {agentSnapshot?.last_run_mode === "cron" ? "Modo cron" : "Modo manual"}
-            </span>
-          </header>
-
-          {!agentSnapshot || !agentSnapshot.last_run_id ? (
-            <div className="px-5 py-5 text-sm text-ink-muted">
-              Aún no hay corrida registrada. Al crear o actualizar onboarding se dispara una corrida del agente.
-            </div>
-          ) : (
-            <div className="space-y-4 px-5 py-5">
-              <div className="flex flex-wrap items-center gap-2">
-                <AgentRunStatusBadge status={agentSnapshot.last_run_status} />
-                <span className="text-xs text-ink-soft">
-                  Inicio {fmtDate(agentSnapshot.last_run_started_at)} · Fin {fmtDate(agentSnapshot.last_run_finished_at)}
-                </span>
-              </div>
-
-              <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                <MetricCell
-                  label="Insumos objetivo"
-                  value={fmtNumber(agentSnapshot.supplies_targeted, { decimals: 0 })}
-                />
-                <MetricCell
-                  label="Scrape OK"
-                  value={fmtNumber(agentSnapshot.supplies_scraped_ok, { decimals: 0 })}
-                />
-                <MetricCell
-                  label="Scrape fallidos"
-                  value={fmtNumber(agentSnapshot.supplies_scraped_failed, { decimals: 0 })}
-                />
-                <MetricCell
-                  label="Puntos forecast"
-                  value={fmtNumber(agentSnapshot.forecast_points_written, { decimals: 0 })}
-                />
-                <MetricCell
-                  label="Alertas disparadas"
-                  value={fmtNumber(agentSnapshot.alerts_triggered, { decimals: 0 })}
-                />
-              </dl>
-
-              <div className="grid gap-3 sm:grid-cols-3">
-                <MetricCell
-                  label="Budget base"
-                  value={fmtCOP(agentSnapshot.baseline_budget)}
-                />
-                <MetricCell
-                  label="Costo proyectado"
-                  value={fmtCOP(agentSnapshot.projected_total_cost)}
-                />
-                <MetricCell
-                  label="Overrun"
-                  value={`${fmtCOP(agentSnapshot.overrun_amount)} · ${fmtPercent(agentSnapshot.overrun_pct, { decimals: 2 })}`}
-                />
-              </div>
-
-              {agentSnapshot.error_summary ? (
-                <p className="rounded-xl border border-status-warn/30 bg-status-warn/10 px-3 py-2 text-xs text-status-warn">
-                  Último error: {agentSnapshot.error_summary}
-                </p>
-              ) : null}
-            </div>
-          )}
-        </section>
 
         {project ? (
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -558,39 +482,4 @@ function prettyStatus(s: string): string {
     cancelado: "Cancelado",
   };
   return map[s] ?? s;
-}
-
-function AgentRunStatusBadge({ status }: { status: string | null }) {
-  const tone =
-    status === "completed"
-      ? "bg-status-ok/10 text-status-ok"
-      : status === "partial"
-        ? "bg-status-warn/10 text-status-warn"
-        : status === "failed"
-          ? "bg-status-risk/10 text-status-risk"
-          : "bg-ink/5 text-ink-soft";
-
-  const label =
-    status === "completed"
-      ? "Completado"
-      : status === "partial"
-        ? "Parcial"
-        : status === "failed"
-          ? "Fallido"
-          : "Sin estado";
-
-  return (
-    <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${tone}`}>
-      Corrida {label}
-    </span>
-  );
-}
-
-function MetricCell({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-line bg-canvas px-3 py-2.5">
-      <p className="text-[11px] uppercase tracking-[0.14em] text-ink-soft">{label}</p>
-      <p className="mt-1 font-mono text-sm text-ink">{value}</p>
-    </div>
-  );
 }

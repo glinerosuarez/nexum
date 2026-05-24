@@ -113,21 +113,15 @@ export function AgentRunFlow({ projectId }: { projectId: string }) {
 
   return (
     <section className="space-y-5 rounded-2xl border border-line bg-canvas-raised p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="inline-flex items-center gap-2 rounded-full bg-status-ok/10 px-3 py-1 text-sm text-status-ok">
-            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-            {runLabel}
-          </p>
-          <p className="mt-2 text-xs text-ink-soft">
-            Inicio {fmtDate(snapshot?.last_run_started_at ?? null)} · Fin{" "}
-            {fmtDate(snapshot?.last_run_finished_at ?? null)}
-          </p>
-        </div>
-        <span className="inline-flex items-center gap-1 rounded-full bg-ink/5 px-2.5 py-1 text-[11px] text-ink-soft">
-          <Bot className="h-3.5 w-3.5" aria-hidden="true" />
-          Modo manual
-        </span>
+      <div>
+        <p className="inline-flex items-center gap-2 rounded-full bg-status-ok/10 px-3 py-1 text-sm text-status-ok">
+          <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+          {runLabel}
+        </p>
+        <p className="mt-2 text-xs text-ink-soft">
+          Inicio {fmtDate(snapshot?.last_run_started_at ?? null)} · Fin{" "}
+          {fmtDate(snapshot?.last_run_finished_at ?? null)}
+        </p>
       </div>
 
       {state.phase === "error" ? (
