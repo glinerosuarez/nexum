@@ -124,6 +124,86 @@ async function ensureBootstrapCriticalSupplies(
   }));
 }
 
+async function ensureBootstrapSupplySources(
+  supabase: SupabaseServerClient,
+  supplies: Array<{ id: string; nombre: string }>,
+): Promise<void> {
+  if (supplies.length === 0) return;
+
+  const { data: existingSources } = await supabase
+    .from("supply_price_sources")
+    .select("supply_id")
+    .in("supply_id", supplies.map((s) => s.id))
+    .eq("is_active", true);
+
+  const mappedSupplyIds = new Set((existingSources ?? []).map((row) => row.supply_id));
+
+  const templatesByName: Record<
+    string,
+    { source_name: string; source_url: string; parse_config: Record<string, unknown> }
+  > = {
+    "concreto 3000 psi": {
+      source_name: "fred_cement",
+      source_url: "https://fred.stlouisfed.org/series/WPU0573",
+      parse_config: {
+        provider: "fred",
+        series_id: "WPU0573",
+        series_key: "cement",
+        label: "PPI: Cement (US market proxy)",
+        price_unit: "index",
+        keywords: ["cemento", "cement", "concreto", "concrete"],
+      },
+    },
+    "acero corrugado #5": {
+      source_name: "fred_steel",
+      source_url: "https://fred.stlouisfed.org/series/WPU101707",
+      parse_config: {
+        provider: "fred",
+        series_id: "WPU101707",
+        series_key: "steel",
+        label: "PPI: Iron and steel (US market proxy)",
+        price_unit: "index",
+        keywords: ["acero", "steel", "varilla", "rebar"],
+      },
+    },
+    "formaleta metalica": {
+      source_name: "fred_steel_formwork",
+      source_url: "https://fred.stlouisfed.org/series/WPU101707",
+      parse_config: {
+        provider: "fred",
+        series_id: "WPU101707",
+        series_key: "steel",
+        label: "PPI: Iron and steel (US market proxy for metal formwork)",
+        price_unit: "index",
+        keywords: ["formaleta", "formwork", "metalica", "steel", "acero"],
+      },
+    },
+  };
+
+  const rowsToInsert = supplies
+    .filter((s) => !mappedSupplyIds.has(s.id))
+    .map((s) => {
+      const key = s.nombre.toLowerCase().trim();
+      const template = templatesByName[key];
+      if (!template) return null;
+      return {
+        supply_id: s.id,
+        source_name: template.source_name,
+        source_url: template.source_url,
+        parse_config: template.parse_config,
+        is_active: true,
+        priority: 1,
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+
+  if (rowsToInsert.length === 0) return;
+
+  await supabase
+    .from("supply_price_sources")
+    .upsert(rowsToInsert, { onConflict: "supply_id,source_url" });
+}
+
 async function bootstrapActivitiesAndSuppliesFromPhases(input: {
   supabase: SupabaseServerClient;
   projectId: string;
@@ -135,8 +215,8 @@ async function bootstrapActivitiesAndSuppliesFromPhases(input: {
     porcentaje_completado: number | null;
   }>;
   projectBudget: number;
-}): Promise<void> {
-  if (input.phases.length === 0) return;
+}): Promise<{ ok: true } | { ok: false; detail: string }> {
+  if (input.phases.length === 0) return { ok: true };
 
   const totalPhaseBudget = input.phases.reduce(
     (acc, ph) => acc + safeMoney(ph.costo_planeado),
@@ -163,13 +243,17 @@ async function bootstrapActivitiesAndSuppliesFromPhases(input: {
     .select("id, phase_id");
 
   if (activitiesError || !activities || activities.length === 0) {
-    throw new Error(
-      `No pudimos crear actividades base: ${activitiesError?.message ?? "sin actividades insertadas"}`,
-    );
+    return {
+      ok: false,
+      detail: `No pudimos crear actividades base: ${activitiesError?.message ?? "sin actividades insertadas"}`,
+    };
   }
 
   const criticalSupplies = await ensureBootstrapCriticalSupplies(input.supabase);
-  if (criticalSupplies.length === 0) return;
+  if (criticalSupplies.length === 0) {
+    return { ok: false, detail: "No hay insumos críticos para bootstrap." };
+  }
+  await ensureBootstrapSupplySources(input.supabase, criticalSupplies);
 
   const phaseById = new Map(input.phases.map((ph) => [ph.id, ph]));
   const supplyRows = activities.map((activity, idx) => {
@@ -197,7 +281,10 @@ async function bootstrapActivitiesAndSuppliesFromPhases(input: {
     .insert(supplyRows);
 
   if (suppliesError) {
-    throw new Error(`No pudimos crear líneas APU base: ${suppliesError.message}`);
+    return {
+      ok: false,
+      detail: `No pudimos crear líneas APU base: ${suppliesError.message}`,
+    };
   }
 
   await input.supabase
@@ -207,54 +294,179 @@ async function bootstrapActivitiesAndSuppliesFromPhases(input: {
         totalPhaseBudget > 0 ? Number(totalPhaseBudget.toFixed(2)) : input.projectBudget,
     })
     .eq("id", input.projectId);
+
+  return { ok: true };
 }
 
-async function invokeSupplyAgentForProject(input: {
+async function createBudgetSnapshotFromProjectSupplies(input: {
   supabase: SupabaseServerClient;
   projectId: string;
-  userId: string | null;
-  accessToken: string | null;
-}): Promise<
-  | { ok: true }
-  | { ok: false; reason: "timeout" | "edge_function_error"; detail: string }
-> {
-  const invokePromise = input.supabase.functions.invoke("run_supply_cost_agent", {
-    body: {
-      project_id: input.projectId,
-      mode: "manual",
-      dry_run: false,
-      user_id: input.userId ?? undefined,
-      access_token: input.accessToken ?? undefined,
-    },
-  });
+}): Promise<{ ok: true } | { ok: false; detail: string }> {
+  const { data: versionRows, error: versionError } = await input.supabase
+    .from("budget_snapshots")
+    .select("version_number")
+    .eq("project_id", input.projectId)
+    .order("version_number", { ascending: false })
+    .limit(1);
 
-  const timeoutMs = 45_000;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error("agent_timeout")), timeoutMs);
-  });
-
-  let result: Awaited<ReturnType<typeof input.supabase.functions.invoke>>;
-  try {
-    result = await Promise.race([invokePromise, timeoutPromise]) as Awaited<
-      ReturnType<typeof input.supabase.functions.invoke>
-    >;
-  } catch (error) {
-    return {
-      ok: false,
-      reason: "timeout",
-      detail: error instanceof Error ? error.message : "agent_timeout",
-    };
+  if (versionError) {
+    return { ok: false, detail: `No pudimos leer versiones de presupuesto: ${versionError.message}` };
   }
 
-  if (result.error) {
-    return {
-      ok: false,
-      reason: "edge_function_error",
-      detail: result.error.message,
-    };
+  const nextVersion = ((versionRows?.[0]?.version_number ?? 0) as number) + 1;
+
+  const { data: supplyRows, error: supplyRowsError } = await input.supabase
+    .from("activity_supplies")
+    .select(
+      "id, subtotal, activities!inner(id, phase_id, project_phases!inner(project_id))",
+    );
+
+  if (supplyRowsError) {
+    return { ok: false, detail: `No pudimos leer líneas APU para snapshot: ${supplyRowsError.message}` };
+  }
+
+  type ActivitySupplyJoin = {
+    id: string;
+    subtotal: number | string | null;
+    activities:
+      | {
+          id: string;
+          phase_id: string;
+          project_phases:
+            | { project_id: string }
+            | { project_id: string }[]
+            | null;
+        }
+      | {
+          id: string;
+          phase_id: string;
+          project_phases:
+            | { project_id: string }
+            | { project_id: string }[]
+            | null;
+        }[]
+      | null;
+  };
+
+  const projectSupplyIds: string[] = [];
+  let totalBudget = 0;
+  for (const row of (supplyRows ?? []) as ActivitySupplyJoin[]) {
+    const activityField = Array.isArray(row.activities)
+      ? row.activities[0]
+      : row.activities;
+    const phasesField = activityField?.project_phases;
+    const phasesArray = Array.isArray(phasesField)
+      ? phasesField
+      : phasesField
+        ? [phasesField]
+        : [];
+    const belongs = phasesArray.some((p) => p?.project_id === input.projectId);
+    if (!belongs) continue;
+    projectSupplyIds.push(row.id);
+    totalBudget += safeMoney(Number(row.subtotal ?? 0));
+  }
+
+  if (projectSupplyIds.length === 0) {
+    return { ok: false, detail: "No encontramos activity_supplies para crear snapshot." };
+  }
+
+  const { data: snapshot, error: snapshotError } = await input.supabase
+    .from("budget_snapshots")
+    .insert({
+      project_id: input.projectId,
+      version_number: nextVersion,
+      estado: "borrador",
+      total_budget: Number(totalBudget.toFixed(2)),
+      notes: "Snapshot automático creado desde onboarding.",
+    })
+    .select("id")
+    .single();
+
+  if (snapshotError || !snapshot) {
+    return { ok: false, detail: `No pudimos crear budget_snapshot: ${snapshotError?.message ?? "sin snapshot"}` };
+  }
+
+  const { data: rowsForItems, error: rowsForItemsError } = await input.supabase
+    .from("activity_supplies")
+    .select("id, cantidad_planeada, precio_unitario")
+    .in("id", projectSupplyIds);
+
+  if (rowsForItemsError) {
+    return { ok: false, detail: `No pudimos leer líneas para budget_snapshot_items: ${rowsForItemsError.message}` };
+  }
+
+  const snapshotItems = (rowsForItems ?? []).map((r) => ({
+    budget_snapshot_id: snapshot.id,
+    activity_supply_id: r.id,
+    cantidad_planeada: r.cantidad_planeada,
+    precio_unitario: r.precio_unitario,
+  }));
+
+  const { error: itemsError } = await (input.supabase as unknown as {
+    from: (table: string) => { insert: (rows: unknown[]) => Promise<{ error: { message: string } | null }> };
+  })
+    .from("budget_snapshot_items")
+    .insert(snapshotItems);
+
+  if (itemsError) {
+    return { ok: false, detail: `No pudimos crear budget_snapshot_items: ${itemsError.message}` };
   }
 
   return { ok: true };
+}
+
+async function ensureDemoProjectMemberships(input: {
+  supabase: SupabaseServerClient;
+  projectId: string;
+  creatorUserId: string | null;
+}): Promise<void> {
+  const roleByEmail: Record<string, "director_proyecto" | "residente_obra" | "residente_administrativo"> = {
+    "directora.proyecto@example.com": "director_proyecto",
+    "residente.obra@example.com": "residente_obra",
+    "residente.admin@example.com": "residente_administrativo",
+  };
+
+  const { data: profiles } = await input.supabase
+    .from("profiles")
+    .select("id, email")
+    .limit(50);
+
+  const membershipMap = new Map<
+    string,
+    {
+      project_id: string;
+      profile_id: string;
+      role: "director_proyecto" | "residente_obra" | "residente_administrativo";
+      active: boolean;
+    }
+  >();
+
+  for (const p of profiles ?? []) {
+    const email = (p.email ?? "").toLowerCase().trim();
+    const mappedRole = roleByEmail[email] ?? "director_proyecto";
+    membershipMap.set(p.id, {
+      project_id: input.projectId,
+      profile_id: p.id,
+      role: mappedRole,
+      active: true,
+    });
+  }
+
+  if (input.creatorUserId) {
+    membershipMap.set(input.creatorUserId, {
+      project_id: input.projectId,
+      profile_id: input.creatorUserId,
+      role: "director_proyecto",
+      active: true,
+    });
+  }
+
+  const memberships = [...membershipMap.values()];
+  if (memberships.length === 0) return;
+
+  await input.supabase
+    .from("project_memberships")
+    .upsert(memberships, { onConflict: "project_id,profile_id" });
 }
 
 export async function createProjectAction(
@@ -284,6 +496,8 @@ export async function createProjectAction(
   }
 
   const supabase = await createSupabaseServerClient();
+  const { data: userData } = await supabase.auth.getUser();
+  const creatorUserId = userData.user?.id ?? null;
 
   const { data: project, error } = await supabase
     .from("projects")
@@ -312,6 +526,12 @@ export async function createProjectAction(
     };
   }
 
+  await ensureDemoProjectMemberships({
+    supabase,
+    projectId: project.id,
+    creatorUserId,
+  });
+
   if (phases.length > 0) {
     const phaseRows = phases
       .filter((p) => (p.nombre ?? "").trim().length > 0)
@@ -337,42 +557,29 @@ export async function createProjectAction(
       }
 
       if ((insertedPhases?.length ?? 0) > 0) {
-        try {
-          await bootstrapActivitiesAndSuppliesFromPhases({
+        const bootstrap = await bootstrapActivitiesAndSuppliesFromPhases({
+          supabase,
+          projectId: project.id,
+          phases: insertedPhases ?? [],
+          projectBudget: presupuesto_total,
+        });
+        if (!bootstrap.ok) {
+          console.warn(`[onboarding] actividad/APU bootstrap falló: ${bootstrap.detail}`);
+        } else {
+          const snapshotResult = await createBudgetSnapshotFromProjectSupplies({
             supabase,
             projectId: project.id,
-            phases: insertedPhases ?? [],
-            projectBudget: presupuesto_total,
           });
-        } catch (bootstrapError) {
-          console.warn(
-            "[onboarding] actividad/APU bootstrap falló",
-            bootstrapError,
-          );
+          if (!snapshotResult.ok) {
+            console.warn(`[onboarding] snapshot presupuestal falló: ${snapshotResult.detail}`);
+          }
         }
       }
     }
   }
 
-  const [{ data: userData }, { data: sessionData }] = await Promise.all([
-    supabase.auth.getUser(),
-    supabase.auth.getSession(),
-  ]);
-
-  const agentInvocation = await invokeSupplyAgentForProject({
-    supabase,
-    projectId: project.id,
-    userId: userData.user?.id ?? null,
-    accessToken: sessionData.session?.access_token ?? null,
-  });
-  if (!agentInvocation.ok) {
-    console.warn(
-      `[onboarding] run_supply_cost_agent did not complete (${agentInvocation.reason}): ${agentInvocation.detail}`,
-    );
-  }
-
   revalidatePath("/dashboard/proyectos");
-  redirect(`/dashboard/proyectos/${project.id}?created=1`);
+  redirect(`/dashboard/proyectos/${project.id}/agente?created=1`);
 }
 
 export interface DeleteActionState {
