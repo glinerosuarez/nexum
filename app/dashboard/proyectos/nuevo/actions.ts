@@ -5,6 +5,8 @@ import { revalidatePath } from "next/cache";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { ParsedPhase } from "@/lib/contract-parser";
 
+type SupabaseServerClient = Awaited<ReturnType<typeof createSupabaseServerClient>>;
+
 export interface CreateActionState {
   ok: boolean;
   message: string | null;
@@ -26,6 +28,233 @@ function asNumber(value: FormDataEntryValue | null): number | null {
 function clampPct(value: number | null | undefined): number {
   if (value == null || !Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, Number(value)));
+}
+
+function safeMoney(value: number | null | undefined): number {
+  if (value == null || !Number.isFinite(value)) return 0;
+  return Math.max(0, Number(value));
+}
+
+function phaseBudgetOrFallback(
+  phaseBudget: number | null | undefined,
+  fallbackPerPhase: number,
+): number {
+  const budget = safeMoney(phaseBudget);
+  if (budget > 0) return budget;
+  return fallbackPerPhase > 0 ? fallbackPerPhase : 0;
+}
+
+async function ensureBootstrapCriticalSupplies(
+  supabase: SupabaseServerClient,
+): Promise<
+  Array<{
+    id: string;
+    nombre: string;
+    unidad_medida: string;
+    precio_referencia: number;
+  }>
+> {
+  const { data: existing } = await supabase
+    .from("supply_catalog")
+    .select("id, nombre, unidad_medida, precio_referencia")
+    .eq("es_critico", true)
+    .eq("activo", true)
+    .order("precio_referencia", { ascending: false })
+    .limit(12);
+
+  if ((existing?.length ?? 0) > 0) {
+    return (existing ?? []).map((s) => ({
+      id: s.id,
+      nombre: s.nombre,
+      unidad_medida: s.unidad_medida,
+      precio_referencia: safeMoney(s.precio_referencia),
+    }));
+  }
+
+  const fallback = [
+    {
+      nombre: "Concreto 3000 PSI",
+      descripcion: "Insumo crítico bootstrap para onboarding de demo.",
+      unidad_medida: "m3",
+      tipo: "material" as const,
+      precio_referencia: 390000,
+      disponibilidad: "disponible" as const,
+      es_critico: true,
+      activo: true,
+    },
+    {
+      nombre: "Acero corrugado #5",
+      descripcion: "Insumo crítico bootstrap para onboarding de demo.",
+      unidad_medida: "kg",
+      tipo: "material" as const,
+      precio_referencia: 5200,
+      disponibilidad: "escaso" as const,
+      es_critico: true,
+      activo: true,
+    },
+    {
+      nombre: "Formaleta metalica",
+      descripcion: "Insumo crítico bootstrap para onboarding de demo.",
+      unidad_medida: "m2",
+      tipo: "subcontrato" as const,
+      precio_referencia: 42000,
+      disponibilidad: "agotado" as const,
+      es_critico: true,
+      activo: true,
+    },
+  ];
+
+  await supabase
+    .from("supply_catalog")
+    .upsert(fallback, { onConflict: "nombre" });
+
+  const { data: seeded } = await supabase
+    .from("supply_catalog")
+    .select("id, nombre, unidad_medida, precio_referencia")
+    .eq("es_critico", true)
+    .eq("activo", true)
+    .order("precio_referencia", { ascending: false })
+    .limit(12);
+
+  return (seeded ?? []).map((s) => ({
+    id: s.id,
+    nombre: s.nombre,
+    unidad_medida: s.unidad_medida,
+    precio_referencia: safeMoney(s.precio_referencia),
+  }));
+}
+
+async function bootstrapActivitiesAndSuppliesFromPhases(input: {
+  supabase: SupabaseServerClient;
+  projectId: string;
+  phases: Array<{
+    id: string;
+    nombre: string;
+    sort_order: number;
+    costo_planeado: number | null;
+    porcentaje_completado: number | null;
+  }>;
+  projectBudget: number;
+}): Promise<void> {
+  if (input.phases.length === 0) return;
+
+  const totalPhaseBudget = input.phases.reduce(
+    (acc, ph) => acc + safeMoney(ph.costo_planeado),
+    0,
+  );
+  const fallbackPerPhase =
+    totalPhaseBudget > 0 || input.phases.length === 0
+      ? 0
+      : safeMoney(input.projectBudget) / input.phases.length;
+
+  const activityRows = input.phases.map((phase) => ({
+    phase_id: phase.id,
+    nombre: `Ejecución ${phase.nombre}`.slice(0, 120),
+    descripcion: "Actividad base creada desde onboarding contractual.",
+    unidad_medida: "global",
+    cantidad_planeada: 1,
+    cantidad_ejecutada: clampPct(phase.porcentaje_completado) / 100,
+    sort_order: 1,
+  }));
+
+  const { data: activities, error: activitiesError } = await input.supabase
+    .from("activities")
+    .insert(activityRows)
+    .select("id, phase_id");
+
+  if (activitiesError || !activities || activities.length === 0) {
+    throw new Error(
+      `No pudimos crear actividades base: ${activitiesError?.message ?? "sin actividades insertadas"}`,
+    );
+  }
+
+  const criticalSupplies = await ensureBootstrapCriticalSupplies(input.supabase);
+  if (criticalSupplies.length === 0) return;
+
+  const phaseById = new Map(input.phases.map((ph) => [ph.id, ph]));
+  const supplyRows = activities.map((activity, idx) => {
+    const phase = phaseById.get(activity.phase_id);
+    const supply = criticalSupplies[idx % criticalSupplies.length];
+    const unitPrice = Math.max(1, safeMoney(supply?.precio_referencia) || 1);
+    const targetBudget = phaseBudgetOrFallback(phase?.costo_planeado, fallbackPerPhase);
+    const qtyPlannedRaw = targetBudget > 0 ? targetBudget / unitPrice : 1;
+    const qtyPlanned = Number(Math.max(0.0001, qtyPlannedRaw).toFixed(4));
+    const qtyExecuted = Number(
+      (qtyPlanned * (clampPct(phase?.porcentaje_completado) / 100)).toFixed(4),
+    );
+
+    return {
+      activity_id: activity.id,
+      supply_id: supply.id,
+      cantidad_planeada: qtyPlanned,
+      cantidad_ejecutada: qtyExecuted,
+      precio_unitario: unitPrice,
+    };
+  });
+
+  const { error: suppliesError } = await input.supabase
+    .from("activity_supplies")
+    .insert(supplyRows);
+
+  if (suppliesError) {
+    throw new Error(`No pudimos crear líneas APU base: ${suppliesError.message}`);
+  }
+
+  await input.supabase
+    .from("projects")
+    .update({
+      presupuesto_total:
+        totalPhaseBudget > 0 ? Number(totalPhaseBudget.toFixed(2)) : input.projectBudget,
+    })
+    .eq("id", input.projectId);
+}
+
+async function invokeSupplyAgentForProject(input: {
+  supabase: SupabaseServerClient;
+  projectId: string;
+  userId: string | null;
+  accessToken: string | null;
+}): Promise<
+  | { ok: true }
+  | { ok: false; reason: "timeout" | "edge_function_error"; detail: string }
+> {
+  const invokePromise = input.supabase.functions.invoke("run_supply_cost_agent", {
+    body: {
+      project_id: input.projectId,
+      mode: "manual",
+      dry_run: false,
+      user_id: input.userId ?? undefined,
+      access_token: input.accessToken ?? undefined,
+    },
+  });
+
+  const timeoutMs = 45_000;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error("agent_timeout")), timeoutMs);
+  });
+
+  let result: Awaited<ReturnType<typeof input.supabase.functions.invoke>>;
+  try {
+    result = await Promise.race([invokePromise, timeoutPromise]) as Awaited<
+      ReturnType<typeof input.supabase.functions.invoke>
+    >;
+  } catch (error) {
+    return {
+      ok: false,
+      reason: "timeout",
+      detail: error instanceof Error ? error.message : "agent_timeout",
+    };
+  }
+
+  if (result.error) {
+    return {
+      ok: false,
+      reason: "edge_function_error",
+      detail: result.error.message,
+    };
+  }
+
+  return { ok: true };
 }
 
 export async function createProjectAction(
@@ -98,8 +327,48 @@ export async function createProjectAction(
         porcentaje_completado: clampPct(p.porcentaje_completado),
       }));
     if (phaseRows.length > 0) {
-      await supabase.from("project_phases").insert(phaseRows);
+      const { data: insertedPhases, error: phaseInsertError } = await supabase
+        .from("project_phases")
+        .insert(phaseRows)
+        .select("id, nombre, sort_order, costo_planeado, porcentaje_completado");
+
+      if (phaseInsertError) {
+        throw new Error(`No pudimos crear las fases: ${phaseInsertError.message}`);
+      }
+
+      if ((insertedPhases?.length ?? 0) > 0) {
+        try {
+          await bootstrapActivitiesAndSuppliesFromPhases({
+            supabase,
+            projectId: project.id,
+            phases: insertedPhases ?? [],
+            projectBudget: presupuesto_total,
+          });
+        } catch (bootstrapError) {
+          console.warn(
+            "[onboarding] actividad/APU bootstrap falló",
+            bootstrapError,
+          );
+        }
+      }
     }
+  }
+
+  const [{ data: userData }, { data: sessionData }] = await Promise.all([
+    supabase.auth.getUser(),
+    supabase.auth.getSession(),
+  ]);
+
+  const agentInvocation = await invokeSupplyAgentForProject({
+    supabase,
+    projectId: project.id,
+    userId: userData.user?.id ?? null,
+    accessToken: sessionData.session?.access_token ?? null,
+  });
+  if (!agentInvocation.ok) {
+    console.warn(
+      `[onboarding] run_supply_cost_agent did not complete (${agentInvocation.reason}): ${agentInvocation.detail}`,
+    );
   }
 
   revalidatePath("/dashboard/proyectos");
