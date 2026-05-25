@@ -26,6 +26,44 @@ type RunState =
   | { phase: "done"; snapshot: AgentSnapshot | null; detail: null }
   | { phase: "error"; snapshot: AgentSnapshot | null; detail: string };
 
+function toNumericOrNull(value: number | string | null | undefined): number | null {
+  if (value == null) return null;
+  const n = typeof value === "string" ? Number(value) : value;
+  return Number.isFinite(n) ? n : null;
+}
+
+function getDesviacion(snapshot: AgentSnapshot | null) {
+  const baseline = toNumericOrNull(snapshot?.baseline_budget);
+  const projected = toNumericOrNull(snapshot?.projected_total_cost);
+
+  if (baseline != null && projected != null && baseline > 0) {
+    const amount = baseline - projected;
+    const pct = (amount / baseline) * 100;
+    return { amount, pct };
+  }
+
+  const overrunAmount = toNumericOrNull(snapshot?.overrun_amount);
+  const overrunPct = toNumericOrNull(snapshot?.overrun_pct);
+  return {
+    amount: overrunAmount == null ? null : -overrunAmount,
+    pct: overrunPct == null ? null : -overrunPct,
+  };
+}
+
+function fmtSignedCOP(value: number | null): string {
+  if (value == null) return "—";
+  if (value > 0) return `+ ${fmtCOP(Math.abs(value))}`;
+  if (value < 0) return `- ${fmtCOP(Math.abs(value))}`;
+  return fmtCOP(0);
+}
+
+function fmtSignedPercent(value: number | null): string {
+  if (value == null) return "—";
+  if (value > 0) return `+${fmtPercent(Math.abs(value), { decimals: 2 })}`;
+  if (value < 0) return `-${fmtPercent(Math.abs(value), { decimals: 2 })}`;
+  return fmtPercent(0, { decimals: 2 });
+}
+
 export function AgentRunFlow({ projectId }: { projectId: string }) {
   const [state, setState] = useState<RunState>({
     phase: "running",
@@ -80,6 +118,7 @@ export function AgentRunFlow({ projectId }: { projectId: string }) {
   }, [projectId]);
 
   const snapshot = state.snapshot;
+  const desviacion = getDesviacion(snapshot);
   const runLabel = !snapshot?.last_run_status
     ? "Sin corrida"
     : snapshot.last_run_status === "completed"
@@ -142,8 +181,8 @@ export function AgentRunFlow({ projectId }: { projectId: string }) {
         <MetricCell label="Budget base" value={fmtCOP(snapshot?.baseline_budget)} />
         <MetricCell label="Costo proyectado" value={fmtCOP(snapshot?.projected_total_cost)} />
         <MetricCell
-          label="Overrun"
-          value={`${fmtCOP(snapshot?.overrun_amount)} · ${fmtPercent(snapshot?.overrun_pct, { decimals: 2 })}`}
+          label="Desviación"
+          value={`${fmtSignedCOP(desviacion.amount)} · ${fmtSignedPercent(desviacion.pct)}`}
         />
       </div>
 
