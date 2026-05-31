@@ -35,10 +35,10 @@ export default function Home() {
           </span>
         </Link>
         <Link
-          href="/dashboard/proyectos"
+          href="/login?next=/dashboard/proyectos"
           className="text-sm text-ink-muted transition-colors hover:text-ink"
         >
-          Abrir panel →
+          Iniciar sesión →
         </Link>
       </header>
 
@@ -59,10 +59,10 @@ export default function Home() {
         </p>
 
         <Link
-          href="/dashboard/proyectos"
+          href="/login?next=/dashboard/proyectos"
           className="mt-10 inline-flex h-12 items-center justify-center gap-2 rounded-full bg-ink px-7 text-[15px] font-medium text-canvas transition-colors hover:bg-[#1a1a1c]"
         >
-          Abrir panel
+          Iniciar sesión
           <ArrowRight className="h-4 w-4" aria-hidden="true" />
         </Link>
       </section>

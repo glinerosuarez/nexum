@@ -1,5 +1,9 @@
-import { notFound } from "next/navigation";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { notFound, redirect } from "next/navigation";
+import { projectExists } from "@/lib/dashboard-data";
+import {
+  isFirebaseAuthError,
+  isUnauthorizedProjectAccessError,
+} from "@/lib/nexum-api/client";
 
 export const dynamic = "force-dynamic";
 
@@ -14,14 +18,20 @@ export default async function ProjectLayout({
 }: ProjectLayoutProps) {
   const { id } = await params;
 
-  const supabase = await createSupabaseServerClient();
-  const { data: project } = await supabase
-    .from("projects")
-    .select("id")
-    .eq("id", id)
-    .maybeSingle();
+  let exists = false;
+  try {
+    exists = await projectExists(id);
+  } catch (error) {
+    if (isFirebaseAuthError(error)) {
+      redirect(`/login?next=${encodeURIComponent(`/dashboard/proyectos/${id}`)}`);
+    }
+    if (isUnauthorizedProjectAccessError(error)) {
+      redirect("/dashboard/proyectos?denied=1");
+    }
+    throw error;
+  }
 
-  if (!project) {
+  if (!exists) {
     notFound();
   }
 

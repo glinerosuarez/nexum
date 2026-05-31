@@ -19,6 +19,10 @@ npm run dev      # http://localhost:3000
 npm run build    # build de producción
 npm run start    # servir el build
 npm run lint
+npm run smoke:migrated-flow
+make gcp-cost-status
+make gcp-sleep
+make gcp-wake
 ```
 
 ## Estructura
@@ -88,36 +92,74 @@ OPENAI_API_PATH=/chat/completions
 OPENAI_USE_CHAT_COMPLETIONS=true
 ```
 
-### Edge Function `run_supply_cost_agent` (Supabase)
+### Block 1: API backend en Cloud Run
 
-La función `supabase/functions/run_supply_cost_agent` ya soporta dos modos:
+El frontend ya no invoca Edge Functions de Supabase para los flujos migrados.
+Ahora consume `nexum-api`:
 
-- `phase2_remote_mcp`: invoca el agente desplegado en MCP/Cloud Run.
-- `phase1_skeleton`: fallback local (stubs) si no hay endpoint configurado.
+- `POST /projects` (creación + bootstrap de onboarding)
+- `POST /agent/run-supply-cost`
+- `GET /chat/messages`
+- `POST /chat/messages`
+- `GET /dashboard/summary`
+- `GET /projects/:id/*`
 
-Variables recomendadas para producción demo (en Supabase Function Secrets):
+Variables mínimas en runtime web:
 
 ```bash
-SUPPLY_AGENT_MCP_URL=https://<cloud-run-service>.run.app/mcp
-SUPPLY_AGENT_USER_ID=<uuid-del-usuario-con-acceso-al-proyecto>
-SUPPLY_AGENT_MCP_REQUIRED=true
-SUPPLY_AGENT_MCP_TIMEOUT_MS=90000
-# opcional si el endpoint requiere bearer
-SUPPLY_AGENT_MCP_BEARER=<token>
+NEXUM_API_BASE_URL=https://<nexum-api-service>.run.app
+FIREBASE_PROJECT_ID=<firebase-project-id>
 ```
 
-Payload de ejemplo:
+El token Firebase debe enviarse como `Authorization: Bearer <token>` o cookie `firebase_id_token`.
 
-```json
-{
-  "project_id": "<project-uuid>",
-  "mode": "manual",
-  "dry_run": false,
-  "horizon_months": 6,
-  "history_months": 36,
-  "overrun_threshold_pct": 10
-}
+### Login UI (Firebase)
+
+El web ya incluye flujo de autenticación por UI:
+
+- `GET /login`: formulario de correo/clave + acceso invitado (anónimo).
+- `POST /api/auth/login`: valida con Firebase Auth y guarda cookie `firebase_id_token` (HttpOnly).
+- `POST /api/auth/logout`: limpia cookie y redirige a login.
+
+Flujo recomendado para demo:
+
+1. Abrir `/login?next=/dashboard/proyectos`.
+2. Click en **Entrar como invitado**.
+3. Se redirige al dashboard autenticado.
+
+### Smoke del flujo migrado
+
+Con `nexum-web` y `nexum-api` activos, ejecuta:
+
+```bash
+NEXT_BASE_URL=http://localhost:3000 \
+NEXUM_API_BASE_URL=https://<nexum-api-service>.run.app \
+FIREBASE_ID_TOKEN=<firebase-id-token> \
+npm run smoke:migrated-flow
 ```
+
+Valida: crear proyecto (`POST /projects`) -> correr agente proxy -> consultar dashboard summary -> renderizar dashboard del proyecto.
+
+### Ahorro de costos GCP (sleep/wake)
+
+Para entorno demo idle:
+
+- `make gcp-sleep`: detiene Cloud SQL (`activationPolicy=NEVER`) y fuerza `min-instances=0` en Cloud Run.
+- `make gcp-wake`: re-activa Cloud SQL (`activationPolicy=ALWAYS`) y restaura `min-instances` de Cloud Run (default `0`; configurable).
+- `make gcp-cost-status`: muestra estado actual de SQL y Cloud Run.
+
+Variables sobrescribibles:
+
+```bash
+make gcp-sleep PROJECT_ID=nexum-497302 REGION=us-central1 DB_INSTANCE=nexum-postgres
+make gcp-wake RUN_SERVICES="nexum-api nexum-web supply-agent-mcp" WAKE_MIN_INSTANCES=1
+```
+
+Notas:
+
+- El ahorro fuerte viene de pausar Cloud SQL.
+- Cloud Run con `min-instances=0` ya "duerme" solo; dejar `WAKE_MIN_INSTANCES=0` minimiza costo y acepta cold starts.
+- Artifact Registry y Cloud Storage no se "pausan"; si necesitas más ahorro ahí, usa políticas de lifecycle/retención para limpieza.
 
 ## Despliegue en Vercel (5 pasos)
 

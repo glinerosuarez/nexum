@@ -16,9 +16,7 @@ interface InsumosPageProps {
 
 export default async function InsumosPage({ params }: InsumosPageProps) {
   const { id: projectId } = await params;
-  // El catálogo de insumos es global a la empresa, pero la vista vive
-  // dentro del contexto del proyecto para mantener la navegación coherente.
-  const supplies = await getAllSupplies();
+  const supplies = await getAllSupplies(projectId);
   const agentSnapshot = await getAgentOverrunSnapshot(projectId);
   const criticos = supplies.filter((s) => s.es_critico);
   const enAlerta = supplies.filter(

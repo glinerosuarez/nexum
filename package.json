@@ -6,11 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "smoke:migrated-flow": "node scripts/smoke-migrated-flow.mjs"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.10.3",
-    "@supabase/supabase-js": "^2.106.1",
     "fast-xml-parser": "^5.8.0",
     "lucide-react": "^0.453.0",
     "next": "^16.2.6",

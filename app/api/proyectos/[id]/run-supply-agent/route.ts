@@ -1,94 +1,127 @@
 import { NextResponse } from "next/server";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import {
+  getAgentOverrunSnapshot,
+  type AgentOverrunSnapshot,
+} from "@/lib/dashboard-data";
+import {
+  getIncomingBearerFromRequest,
+  nexumApiRequest,
+} from "@/lib/nexum-api/client";
 
-type AgentInvokeResult =
-  | { ok: true }
-  | { ok: false; reason: "timeout" | "edge_function_error"; detail: string };
+interface RunSupplyCostPayload {
+  project_id: string;
+  mode?: "manual" | "cron";
+  dry_run?: boolean;
+  horizon_months?: number;
+  history_months?: number;
+  overrun_threshold_pct?: number;
+  material_queries?: string[];
+}
 
-async function invokeSupplyAgentForProject(input: {
-  projectId: string;
-  userId: string | null;
-  accessToken: string | null;
-}): Promise<AgentInvokeResult> {
-  const supabase = await createSupabaseServerClient();
+interface RunSupplyCostResponse {
+  ok: boolean;
+  phase?: string;
+  run_id?: string | null;
+  supplies_scraped_ok?: number;
+  supplies_scraped_failed?: number;
+  forecast_points_written?: number;
+  alerts_triggered?: number;
+  detail?: string;
+}
 
-  const invokePromise = supabase.functions.invoke("run_supply_cost_agent", {
-    body: {
-      project_id: input.projectId,
-      mode: "manual",
-      dry_run: false,
-      user_id: input.userId ?? undefined,
-      access_token: input.accessToken ?? undefined,
-    },
-  });
-
-  const timeoutMs = 120_000;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    setTimeout(() => reject(new Error("agent_timeout")), timeoutMs);
-  });
-
-  let result: Awaited<ReturnType<typeof supabase.functions.invoke>>;
-  try {
-    result = await Promise.race([invokePromise, timeoutPromise]) as Awaited<
-      ReturnType<typeof supabase.functions.invoke>
-    >;
-  } catch (error) {
-    return {
-      ok: false,
-      reason: "timeout",
-      detail: error instanceof Error ? error.message : "agent_timeout",
-    };
+function inferRunStatus(phase?: string): string | null {
+  if (!phase) return null;
+  const normalized = phase.toLowerCase();
+  if (normalized.includes("partial")) return "partial";
+  if (normalized.includes("fail") || normalized.includes("error")) return "failed";
+  if (normalized.includes("run")) return "running";
+  if (
+    normalized.includes("done") ||
+    normalized.includes("success") ||
+    normalized.includes("completed")
+  ) {
+    return "completed";
   }
+  return null;
+}
 
-  if (result.error) {
-    return {
-      ok: false,
-      reason: "edge_function_error",
-      detail: result.error.message,
-    };
-  }
-
-  return { ok: true };
+function buildSnapshotFallback(
+  projectId: string,
+  payload: RunSupplyCostResponse,
+): AgentOverrunSnapshot {
+  const scrapedOk = payload.supplies_scraped_ok ?? 0;
+  const scrapedFailed = payload.supplies_scraped_failed ?? 0;
+  return {
+    project_id: projectId,
+    project_nombre: "",
+    last_run_id: payload.run_id ?? null,
+    last_run_mode: "manual",
+    last_run_status: inferRunStatus(payload.phase) ?? "completed",
+    last_run_started_at: null,
+    last_run_finished_at: null,
+    supplies_targeted: Math.max(scrapedOk + scrapedFailed, 0),
+    supplies_scraped_ok: scrapedOk,
+    supplies_scraped_failed: scrapedFailed,
+    forecast_points_written: payload.forecast_points_written ?? 0,
+    alerts_triggered: payload.alerts_triggered ?? 0,
+    error_summary: payload.detail ?? null,
+    last_alert_id: null,
+    last_alert_severity: null,
+    last_alert_status: null,
+    last_alert_triggered_at: null,
+    baseline_budget: 0,
+    projected_total_cost: 0,
+    overrun_amount: 0,
+    overrun_pct: 0,
+    threshold_pct: 0,
+  };
 }
 
 export async function POST(
-  _req: Request,
+  req: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   const { id: projectId } = await context.params;
-  const supabase = await createSupabaseServerClient();
+  const incoming = (await req.json().catch(() => ({}))) as Partial<RunSupplyCostPayload>;
 
-  const [{ data: userData }, { data: sessionData }] = await Promise.all([
-    supabase.auth.getUser(),
-    supabase.auth.getSession(),
-  ]);
+  try {
+    const runPayload = await nexumApiRequest<RunSupplyCostResponse>(
+      "/agent/run-supply-cost",
+      {
+        method: "POST",
+        bearerToken: getIncomingBearerFromRequest(req),
+        body: {
+          project_id: projectId,
+          mode: incoming.mode ?? "manual",
+          dry_run: incoming.dry_run ?? false,
+          horizon_months: incoming.horizon_months,
+          history_months: incoming.history_months,
+          overrun_threshold_pct: incoming.overrun_threshold_pct,
+          material_queries: incoming.material_queries,
+        },
+      },
+    );
 
-  const invocation = await invokeSupplyAgentForProject({
-    projectId,
-    userId: userData.user?.id ?? null,
-    accessToken: sessionData.session?.access_token ?? null,
-  });
+    const persistedSnapshot = await getAgentOverrunSnapshot(projectId);
+    const snapshot =
+      persistedSnapshot ??
+      (runPayload.ok ? buildSnapshotFallback(projectId, runPayload) : null);
 
-  const { data: snapshot } = await supabase
-    .from("agent_overrun_snapshot")
-    .select("*")
-    .eq("project_id", projectId)
-    .maybeSingle();
-
-  if (!invocation.ok) {
+    return NextResponse.json({
+      ...runPayload,
+      ok: runPayload.ok,
+      snapshot,
+    });
+  } catch (error) {
+    const snapshot = await getAgentOverrunSnapshot(projectId).catch(() => null);
     return NextResponse.json(
       {
         ok: false,
-        reason: invocation.reason,
-        detail: invocation.detail,
-        snapshot: snapshot ?? null,
+        reason: "agent_api_error",
+        detail: error instanceof Error ? error.message : "No pudimos ejecutar el agente.",
+        snapshot,
       },
       { status: 502 },
     );
   }
-
-  return NextResponse.json({
-    ok: true,
-    snapshot: snapshot ?? null,
-  });
 }

@@ -1,6 +1,6 @@
 import { Topbar } from "@/components/dashboard/Topbar";
 import { AgentRunFlow } from "@/components/dashboard/AgentRunFlow";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getProjectBasic } from "@/lib/dashboard-data";
 
 export const dynamic = "force-dynamic";
 
@@ -10,13 +10,7 @@ interface AgentRunPageProps {
 
 export default async function AgentRunPage({ params }: AgentRunPageProps) {
   const { id: projectId } = await params;
-  const supabase = await createSupabaseServerClient();
-
-  const { data: project } = await supabase
-    .from("projects")
-    .select("nombre")
-    .eq("id", projectId)
-    .maybeSingle();
+  const project = await getProjectBasic(projectId);
 
   return (
     <>

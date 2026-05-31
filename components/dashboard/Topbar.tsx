@@ -30,6 +30,15 @@ export function Topbar({ title, subtitle }: TopbarProps) {
           <Home className="h-4 w-4" aria-hidden="true" />
           <span className="hidden sm:inline">Inicio</span>
         </Link>
+        <form action="/api/auth/logout" method="post">
+          <input type="hidden" name="next" value="/login" />
+          <button
+            type="submit"
+            className="inline-flex h-10 items-center justify-center rounded-full border border-line bg-canvas-raised px-3 text-sm text-ink-muted transition-colors hover:border-ink/30 hover:text-ink"
+          >
+            Salir
+          </button>
+        </form>
       </div>
     </header>
   );

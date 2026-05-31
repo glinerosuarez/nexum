@@ -14,11 +14,11 @@ import { fmtCOPCompact, fmtDate, fmtPercent } from "@/lib/format";
 export const dynamic = "force-dynamic";
 
 interface ProyectosPageProps {
-  searchParams: Promise<{ created?: string; deleted?: string }>;
+  searchParams: Promise<{ created?: string; deleted?: string; denied?: string }>;
 }
 
 export default async function ProyectosPage({ searchParams }: ProyectosPageProps) {
-  const { created, deleted } = await searchParams;
+  const { created, deleted, denied } = await searchParams;
   const projects = await listProjects();
 
   const presupuestoTotal = projects.reduce(
@@ -50,6 +50,14 @@ export default async function ProyectosPage({ searchParams }: ProyectosPageProps
             className="rounded-2xl border border-ink/20 bg-ink/[0.04] px-4 py-3 text-sm text-ink"
           >
             Proyecto eliminado.
+          </div>
+        ) : null}
+        {denied ? (
+          <div
+            role="status"
+            className="rounded-2xl border border-status-warn/30 bg-status-warn/10 px-4 py-3 text-sm text-status-warn"
+          >
+            No tienes acceso al proyecto solicitado.
           </div>
         ) : null}
 

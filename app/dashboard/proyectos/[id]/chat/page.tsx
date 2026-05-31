@@ -1,6 +1,6 @@
 import { Topbar } from "@/components/dashboard/Topbar";
 import { ProjectDataChat } from "@/components/dashboard/ProjectDataChat";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getProjectBasic } from "@/lib/dashboard-data";
 
 export const dynamic = "force-dynamic";
 
@@ -11,12 +11,7 @@ interface ProjectChatPageProps {
 export default async function ProjectChatPage({ params }: ProjectChatPageProps) {
   const { id: projectId } = await params;
 
-  const supabase = await createSupabaseServerClient();
-  const { data: project } = await supabase
-    .from("projects")
-    .select("nombre")
-    .eq("id", projectId)
-    .maybeSingle();
+  const project = await getProjectBasic(projectId);
 
   return (
     <>

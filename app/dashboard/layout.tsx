@@ -1,6 +1,8 @@
+import { redirect } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { ProjectsProvider } from "@/components/dashboard/ProjectContext";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { listProjects } from "@/lib/dashboard-data";
+import { isFirebaseAuthError } from "@/lib/nexum-api/client";
 
 export const dynamic = "force-dynamic";
 
@@ -9,13 +11,24 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const supabase = await createSupabaseServerClient();
-  const { data: projects } = await supabase
-    .from("projects")
-    .select("id, nombre")
-    .order("created_at", { ascending: false });
+  let projects: Awaited<ReturnType<typeof listProjects>> = [];
+  let shouldRedirectToHome = false;
 
-  const choices = (projects ?? []).map((p) => ({
+  try {
+    projects = await listProjects();
+  } catch (error) {
+    if (isFirebaseAuthError(error)) {
+      shouldRedirectToHome = true;
+    } else {
+      throw error;
+    }
+  }
+
+  if (shouldRedirectToHome) {
+    redirect("/login?next=/dashboard/proyectos");
+  }
+
+  const choices = projects.map((p) => ({
     id: p.id,
     nombre: p.nombre,
   }));
