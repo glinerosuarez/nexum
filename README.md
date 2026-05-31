@@ -1,6 +1,6 @@
 # Nexum — Landing
 
-Landing page production-ready para **Nexum**, plataforma PMO y ERP/CRM para construcción impulsada por IA. Construida con Next.js 15 (App Router), TypeScript y Tailwind CSS. Lista para desplegar en Vercel sin configuración adicional.
+Landing page production-ready para **Nexum**, plataforma PMO y ERP/CRM para construcción impulsada por IA. Construida con Next.js 15 (App Router), TypeScript y Tailwind CSS. Migrada para ejecución en Cloud Run + API backend GCP.
 
 ## Stack
 
@@ -9,7 +9,7 @@ Landing page production-ready para **Nexum**, plataforma PMO y ERP/CRM para cons
 - **Estilos:** Tailwind CSS 3.4
 - **Tipografías:** `next/font` — Instrument Serif (display) + Inter (sans) + JetBrains Mono (mono)
 - **Íconos:** `lucide-react`
-- **Despliegue:** Vercel (sin servidor propio, sin Docker)
+- **Despliegue:** Cloud Run (contenedor Docker)
 
 ## Comandos
 
@@ -50,7 +50,7 @@ public/
   favicon.svg
   og-image.svg
 tailwind.config.ts    → tokens de diseño (colores, fuentes, spacing)
-next.config.ts        → configuración mínima para Vercel
+next.config.ts        → configuración mínima de Next.js
 postcss.config.mjs
 .env.example          → variables documentadas
 ```
@@ -161,15 +161,34 @@ Notas:
 - Cloud Run con `min-instances=0` ya "duerme" solo; dejar `WAKE_MIN_INSTANCES=0` minimiza costo y acepta cold starts.
 - Artifact Registry y Cloud Storage no se "pausan"; si necesitas más ahorro ahí, usa políticas de lifecycle/retención para limpieza.
 
-## Despliegue en Vercel (5 pasos)
+## Despliegue en Cloud Run (manual)
 
-1. Sube el repositorio a GitHub/GitLab/Bitbucket.
-2. En [vercel.com/new](https://vercel.com/new) importa el repo.
-3. Vercel detecta Next.js automáticamente. Deja los comandos por defecto (`next build`, output `Next.js`).
-4. (Opcional) Agrega las variables de `.env.example` en *Project → Settings → Environment Variables*.
-5. **Deploy**. Vercel publica en una URL `*.vercel.app` y entrega CDN, edge cache y optimización de imágenes/fuentes lista.
+1. Construye y publica imagen:
+```bash
+gcloud builds submit . \
+  --project=nexum-497302 \
+  --tag=us-central1-docker.pkg.dev/nexum-497302/nexum/nexum-web:<tag>
+```
+2. Despliega `nexum-web`:
+```bash
+gcloud run deploy nexum-web \
+  --project=nexum-497302 \
+  --region=us-central1 \
+  --image=us-central1-docker.pkg.dev/nexum-497302/nexum/nexum-web:<tag> \
+  --allow-unauthenticated \
+  --port=8080 \
+  --set-env-vars=NEXUM_API_BASE_URL=https://nexum-api-xxxxx-uc.a.run.app \
+  --set-secrets=FIREBASE_WEB_API_KEY=nexum-firebase-web-api-key:latest
+```
+3. Verifica la URL del servicio:
+```bash
+gcloud run services describe nexum-web \
+  --project=nexum-497302 \
+  --region=us-central1 \
+  --format='value(status.url)'
+```
 
 ## Notas
 
 - La página corre con `next/font` (cero requests a Google Fonts en runtime) y `next/image` listo para usarse al añadir fotografías.
-- Todo el contenido es estático: el build genera HTML pre-renderizado, ideal para edge de Vercel.
+- Para flujos autenticados, `nexum-web` depende de `nexum-api` y de Firebase Auth configurado.
