@@ -1,23 +1,23 @@
 # Nexum — Landing
 
-Landing page production-ready para **Nexum**, plataforma PMO y ERP/CRM para construcción impulsada por IA. Construida con Next.js 15 (App Router), TypeScript y Tailwind CSS. Migrada para ejecución en Cloud Run + API backend GCP.
+Production-ready landing page for **Nexum**, an AI-powered PMO and ERP/CRM platform for construction. Built with Next.js 15 (App Router), TypeScript, and Tailwind CSS. Migrated to run on Cloud Run with a GCP backend API.
 
 ## Stack
 
 - **Framework:** Next.js 15 (App Router) + React 19
-- **Lenguaje:** TypeScript (strict)
-- **Estilos:** Tailwind CSS 3.4
-- **Tipografías:** `next/font` — Instrument Serif (display) + Inter (sans) + JetBrains Mono (mono)
-- **Íconos:** `lucide-react`
-- **Despliegue:** Cloud Run (contenedor Docker)
+- **Language:** TypeScript (strict)
+- **Styling:** Tailwind CSS 3.4
+- **Typography:** `next/font` — Instrument Serif (display) + Inter (sans) + JetBrains Mono (mono)
+- **Icons:** `lucide-react`
+- **Deployment:** Cloud Run (Docker container)
 
-## Comandos
+## Commands
 
 ```bash
 npm install
 npm run dev      # http://localhost:3000
-npm run build    # build de producción
-npm run start    # servir el build
+npm run build    # production build
+npm run start    # serve the build
 npm run lint
 npm run smoke:migrated-flow
 make gcp-cost-status
@@ -25,13 +25,13 @@ make gcp-sleep
 make gcp-wake
 ```
 
-## Estructura
+## Structure
 
 ```
 app/
-  layout.tsx          → fuentes, metadata SEO y OG
-  page.tsx            → composición de la home
-  globals.css         → variables, base y utilidades
+  layout.tsx          → fonts, SEO/OG metadata
+  page.tsx            → home page composition
+  globals.css         → variables, base, and utilities
 components/
   Navigation.tsx
   Hero.tsx
@@ -49,30 +49,30 @@ components/
 public/
   favicon.svg
   og-image.svg
-tailwind.config.ts    → tokens de diseño (colores, fuentes, spacing)
-next.config.ts        → configuración mínima de Next.js
+tailwind.config.ts    → design tokens (colors, fonts, spacing)
+next.config.ts        → minimal Next.js configuration
 postcss.config.mjs
-.env.example          → variables documentadas
+.env.example          → documented environment variables
 ```
 
-## Sistema de diseño
+## Design System
 
-Estilo minimalista, premium y técnico:
+Minimal, premium, and technical style:
 
-- **Paleta:** canvas crema `#F7F6F2`, ink `#0B0B0C`, acento ámbar `#B45309`, estados `ok / warn / risk`.
-- **Tipografía:** display serif (Instrument Serif) + cuerpo sans (Inter) + mono (JetBrains Mono).
-- **Layout:** mobile-first; breakpoints `sm / md / lg / xl`; container centrado con padding responsivo.
-- **Componentes:** botón pill, cards con borde hairline, tabla "grid de hairlines", chat IA, hero KPI mock.
+- **Palette:** cream canvas `#F7F6F2`, ink `#0B0B0C`, amber accent `#B45309`, status colors `ok / warn / risk`.
+- **Typography:** display serif (Instrument Serif) + body sans (Inter) + mono (JetBrains Mono).
+- **Layout:** mobile-first; breakpoints `sm / md / lg / xl`; centered container with responsive padding.
+- **Components:** pill button, hairline-border cards, hairline-grid table, AI chat, KPI hero mock.
 
-## Variables de entorno
+## Environment Variables
 
-Ver `.env.example`. Ninguna variable es obligatoria para que el sitio compile; solo se documentan para el correo de contacto y analítica opcional.
+See `.env.example`. No variable is strictly required to compile the site; variables are documented mainly for contact email and optional analytics.
 
-### Chat con datos (LLM barato)
+### Data Chat (Low-Cost LLM)
 
-El chat de proyecto soporta endpoint OpenAI y endpoint OpenAI-compatible en Google Cloud.
+The project chat supports both OpenAI and OpenAI-compatible endpoints on Google Cloud.
 
-Config por defecto (OpenAI):
+Default configuration (OpenAI):
 
 ```bash
 OPENAI_MODEL=gpt-4.1-nano
@@ -82,7 +82,7 @@ OPENAI_API_PATH=/responses
 OPENAI_USE_CHAT_COMPLETIONS=false
 ```
 
-Config en Google Cloud Vertex AI (OpenAI-compatible):
+Google Cloud Vertex AI configuration (OpenAI-compatible):
 
 ```bash
 OPENAI_MODEL=google/gemini-2.5-flash-lite
@@ -92,44 +92,44 @@ OPENAI_API_PATH=/chat/completions
 OPENAI_USE_CHAT_COMPLETIONS=true
 ```
 
-### Block 1: API backend en Cloud Run
+### Block 1: Cloud Run API Backend
 
-El frontend ya no invoca Edge Functions de Supabase para los flujos migrados.
-Ahora consume `nexum-api`:
+The frontend no longer calls Supabase Edge Functions for migrated flows.
+It now consumes `nexum-api`:
 
-- `POST /projects` (creación + bootstrap de onboarding)
+- `POST /projects` (project creation + onboarding bootstrap)
 - `POST /agent/run-supply-cost`
 - `GET /chat/messages`
 - `POST /chat/messages`
 - `GET /dashboard/summary`
 - `GET /projects/:id/*`
 
-Variables mínimas en runtime web:
+Minimum web runtime variables:
 
 ```bash
 NEXUM_API_BASE_URL=https://<nexum-api-service>.run.app
 FIREBASE_PROJECT_ID=<firebase-project-id>
 ```
 
-El token Firebase debe enviarse como `Authorization: Bearer <token>` o cookie `firebase_id_token`.
+Firebase token must be sent as `Authorization: Bearer <token>` or `firebase_id_token` cookie.
 
 ### Login UI (Firebase)
 
-El web ya incluye flujo de autenticación por UI:
+The web app already includes UI authentication flow:
 
-- `GET /login`: formulario de correo/clave + acceso invitado (anónimo).
-- `POST /api/auth/login`: valida con Firebase Auth y guarda cookie `firebase_id_token` (HttpOnly).
-- `POST /api/auth/logout`: limpia cookie y redirige a login.
+- `GET /login`: email/password form + guest (anonymous) access.
+- `POST /api/auth/login`: validates with Firebase Auth and stores `firebase_id_token` cookie (HttpOnly).
+- `POST /api/auth/logout`: clears cookie and redirects to login.
 
-Flujo recomendado para demo:
+Recommended demo flow:
 
-1. Abrir `/login?next=/dashboard/proyectos`.
-2. Click en **Entrar como invitado**.
-3. Se redirige al dashboard autenticado.
+1. Open `/login?next=/dashboard/proyectos`.
+2. Click **Entrar como invitado**.
+3. User is redirected to the authenticated dashboard.
 
-### Smoke del flujo migrado
+### Migrated Flow Smoke Test
 
-Con `nexum-web` y `nexum-api` activos, ejecuta:
+With `nexum-web` and `nexum-api` running, execute:
 
 ```bash
 NEXT_BASE_URL=http://localhost:3000 \
@@ -138,38 +138,38 @@ FIREBASE_ID_TOKEN=<firebase-id-token> \
 npm run smoke:migrated-flow
 ```
 
-Valida: crear proyecto (`POST /projects`) -> correr agente proxy -> consultar dashboard summary -> renderizar dashboard del proyecto.
+Validation path: create project (`POST /projects`) -> run agent proxy -> fetch dashboard summary -> render project dashboard.
 
-### Ahorro de costos GCP (sleep/wake)
+### GCP Cost Savings (Sleep/Wake)
 
-Para entorno demo idle:
+For idle demo environments:
 
-- `make gcp-sleep`: detiene Cloud SQL (`activationPolicy=NEVER`) y fuerza `min-instances=0` en Cloud Run.
-- `make gcp-wake`: re-activa Cloud SQL (`activationPolicy=ALWAYS`) y restaura `min-instances` de Cloud Run (default `0`; configurable).
-- `make gcp-cost-status`: muestra estado actual de SQL y Cloud Run.
+- `make gcp-sleep`: stops Cloud SQL (`activationPolicy=NEVER`) and forces `min-instances=0` on Cloud Run.
+- `make gcp-wake`: re-enables Cloud SQL (`activationPolicy=ALWAYS`) and restores Cloud Run `min-instances` (default `0`; configurable).
+- `make gcp-cost-status`: prints current SQL + Cloud Run status.
 
-Variables sobrescribibles:
+Overridable variables:
 
 ```bash
 make gcp-sleep PROJECT_ID=nexum-497302 REGION=us-central1 DB_INSTANCE=nexum-postgres
 make gcp-wake RUN_SERVICES="nexum-api nexum-web supply-agent-mcp" WAKE_MIN_INSTANCES=1
 ```
 
-Notas:
+Notes:
 
-- El ahorro fuerte viene de pausar Cloud SQL.
-- Cloud Run con `min-instances=0` ya "duerme" solo; dejar `WAKE_MIN_INSTANCES=0` minimiza costo y acepta cold starts.
-- Artifact Registry y Cloud Storage no se "pausan"; si necesitas más ahorro ahí, usa políticas de lifecycle/retención para limpieza.
+- Most savings come from pausing Cloud SQL.
+- Cloud Run with `min-instances=0` already auto-sleeps; keeping `WAKE_MIN_INSTANCES=0` minimizes cost and accepts cold starts.
+- Artifact Registry and Cloud Storage cannot be paused; for extra savings there, use lifecycle/retention policies for cleanup.
 
-## Despliegue en Cloud Run (manual)
+## Cloud Run Deployment (Manual)
 
-1. Construye y publica imagen:
+1. Build and publish image:
 ```bash
 gcloud builds submit . \
   --project=nexum-497302 \
   --tag=us-central1-docker.pkg.dev/nexum-497302/nexum/nexum-web:<tag>
 ```
-2. Despliega `nexum-web`:
+2. Deploy `nexum-web`:
 ```bash
 gcloud run deploy nexum-web \
   --project=nexum-497302 \
@@ -180,7 +180,7 @@ gcloud run deploy nexum-web \
   --set-env-vars=NEXUM_API_BASE_URL=https://nexum-api-xxxxx-uc.a.run.app \
   --set-secrets=FIREBASE_WEB_API_KEY=nexum-firebase-web-api-key:latest
 ```
-3. Verifica la URL del servicio:
+3. Verify service URL:
 ```bash
 gcloud run services describe nexum-web \
   --project=nexum-497302 \
@@ -188,7 +188,7 @@ gcloud run services describe nexum-web \
   --format='value(status.url)'
 ```
 
-## Notas
+## Notes
 
-- La página corre con `next/font` (cero requests a Google Fonts en runtime) y `next/image` listo para usarse al añadir fotografías.
-- Para flujos autenticados, `nexum-web` depende de `nexum-api` y de Firebase Auth configurado.
+- The page uses `next/font` (zero runtime requests to Google Fonts), and `next/image` is ready when adding photography.
+- For authenticated flows, `nexum-web` depends on `nexum-api` and configured Firebase Auth.
