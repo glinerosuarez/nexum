@@ -4,7 +4,7 @@ set -euo pipefail
 PROJECT_ID="${PROJECT_ID:-nexum-497302}"
 REGION="${REGION:-us-central1}"
 DB_INSTANCE="${DB_INSTANCE:-nexum-postgres}"
-RUN_SERVICES="${RUN_SERVICES:-nexum-api nexum-web}"
+RUN_SERVICES="${RUN_SERVICES:-nexum-api nexum-web mcp-fca-hackaton}"
 WAKE_MIN_INSTANCES="${WAKE_MIN_INSTANCES:-0}"
 
 log() {

@@ -83,6 +83,7 @@ export async function POST(
 ) {
   const { id: projectId } = await context.params;
   const incoming = (await req.json().catch(() => ({}))) as Partial<RunSupplyCostPayload>;
+  const runId = req.headers.get("x-run-id") ?? crypto.randomUUID();
 
   try {
     const runPayload = await nexumApiRequest<RunSupplyCostResponse>(
@@ -90,6 +91,7 @@ export async function POST(
       {
         method: "POST",
         bearerToken: getIncomingBearerFromRequest(req),
+        extraHeaders: { "x-run-id": runId },
         body: {
           project_id: projectId,
           mode: incoming.mode ?? "manual",
@@ -107,14 +109,16 @@ export async function POST(
       persistedSnapshot ??
       (runPayload.ok ? buildSnapshotFallback(projectId, runPayload) : null);
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       ...runPayload,
       ok: runPayload.ok,
       snapshot,
     });
+    response.headers.set("x-run-id", runPayload.run_id ?? runId);
+    return response;
   } catch (error) {
     const snapshot = await getAgentOverrunSnapshot(projectId).catch(() => null);
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         ok: false,
         reason: "agent_api_error",
@@ -123,5 +127,7 @@ export async function POST(
       },
       { status: 502 },
     );
+    response.headers.set("x-run-id", runId);
+    return response;
   }
 }

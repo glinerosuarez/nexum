@@ -3,7 +3,7 @@ SHELL := /bin/bash
 PROJECT_ID ?= nexum-497302
 REGION ?= us-central1
 DB_INSTANCE ?= nexum-postgres
-RUN_SERVICES ?= nexum-api nexum-web
+RUN_SERVICES ?= nexum-api nexum-web mcp-fca-hackaton
 WAKE_MIN_INSTANCES ?= 0
 
 COST_SCRIPT := ./scripts/gcp-cost-controls.sh

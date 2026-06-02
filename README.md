@@ -152,7 +152,7 @@ Overridable variables:
 
 ```bash
 make gcp-sleep PROJECT_ID=nexum-497302 REGION=us-central1 DB_INSTANCE=nexum-postgres
-make gcp-wake RUN_SERVICES="nexum-api nexum-web supply-agent-mcp" WAKE_MIN_INSTANCES=1
+make gcp-wake RUN_SERVICES="nexum-api nexum-web mcp-fca-hackaton" WAKE_MIN_INSTANCES=1
 ```
 
 Notes:

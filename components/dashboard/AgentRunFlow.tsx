@@ -37,7 +37,7 @@ function getDesviacion(snapshot: AgentSnapshot | null) {
   const projected = toNumericOrNull(snapshot?.projected_total_cost);
 
   if (baseline != null && projected != null && baseline > 0) {
-    const amount = baseline - projected;
+    const amount = projected - baseline;
     const pct = (amount / baseline) * 100;
     return { amount, pct };
   }
@@ -45,8 +45,8 @@ function getDesviacion(snapshot: AgentSnapshot | null) {
   const overrunAmount = toNumericOrNull(snapshot?.overrun_amount);
   const overrunPct = toNumericOrNull(snapshot?.overrun_pct);
   return {
-    amount: overrunAmount == null ? null : -overrunAmount,
-    pct: overrunPct == null ? null : -overrunPct,
+    amount: overrunAmount,
+    pct: overrunPct,
   };
 }
 
