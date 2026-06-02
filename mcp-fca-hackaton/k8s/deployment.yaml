@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mi-servidor-mcp
+  labels:
+    app: mi-servidor-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mi-servidor-mcp
+  template:
+    metadata:
+      labels:
+        app: mi-servidor-mcp
+    spec:
+      containers:
+        - name: mcp-server
+          image: mcp-production-server:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: MCP_HOST
+              value: "0.0.0.0"
+            - name: MCP_PORT
+              value: "8000"
+            - name: AGENT_BACKEND
+              value: "ollama"
+            - name: OLLAMA_BASE_URL
+              value: "http://host.minikube.internal:11434"
+            - name: OLLAMA_MODEL
+              value: "qwen2.5:7b"
+            - name: OLLAMA_TEMPERATURE
+              value: "0"
+            - name: CLOUD_SQL_INSTANCE
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-postgres
+                  key: cloud_sql_instance
+                  optional: true
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-postgres
+                  key: db_name
+                  optional: true
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-postgres
+                  key: db_user
+                  optional: true
+            - name: DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: mcp-postgres
+                  key: db_pass
+                  optional: true
+          readinessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"

@@ -53,7 +53,12 @@ tailwind.config.ts    → design tokens (colors, fonts, spacing)
 next.config.ts        → minimal Next.js configuration
 postcss.config.mjs
 .env.example          → documented environment variables
+mcp-fca-hackaton/     → MCP runtime, nexum-api backend, Cloud SQL agent persistence
 ```
+
+The repository now contains both:
+- the Next.js web app at the repo root, and
+- the supply-agent/backend runtime under `mcp-fca-hackaton/`.
 
 ## Design System
 

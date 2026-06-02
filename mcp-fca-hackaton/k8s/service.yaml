@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mi-servidor-mcp
+  labels:
+    app: mi-servidor-mcp
+spec:
+  type: ClusterIP
+  selector:
+    app: mi-servidor-mcp
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
