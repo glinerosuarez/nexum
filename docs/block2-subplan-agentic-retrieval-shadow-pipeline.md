@@ -9,6 +9,122 @@ The goal is not to replace the current deterministic supply-intelligence pipelin
 
 This is a quality-improvement workstream, not a runtime rewrite.
 
+## Current Status
+The first executable shadow slice is now implemented in the monorepo and deployed.
+
+Implemented so far:
+1. Additive Cloud SQL schema for:
+  - `project_input_agentic_runs`
+  - `project_input_agentic_candidates`
+  - `project_input_agentic_row_judgments`
+2. Monorepo backend support under `Nexum-IA/mcp-fca-hackaton` for:
+  - creating a shadow run,
+  - persisting `extract_shadow_candidates` outputs,
+  - qualifying stored candidates,
+  - reading project-level supply-selection comparison data.
+3. Frontend analysis-route wiring so upload analysis now:
+  - persists deterministic Block 2 intake first,
+  - translates client-side ids to persisted ids,
+  - creates an `agentic_shadow` run,
+  - immediately runs qualification.
+4. First end-to-end shadow candidate extraction from row-emitting contractual sources:
+  - `csv`
+  - `xlsx`
+  - `apu_markdown`
+5. First qualification scaffold over persisted shadow candidates with labels:
+  - `qualified_supply`
+  - `heading_or_chapter`
+  - `scope_or_activity`
+  - `bundle_or_mixed_scope`
+  - `labor_or_service`
+  - `unresolved`
+
+Current limits of the implemented slice:
+1. The shadow path is still heuristic and table-anchored.
+2. It is not yet LLM-driven or fully retrieval-augmented.
+3. XML, PDF, DOCX, and generic free-text sources are not yet producing shadow candidates.
+4. Normalization enrichment and monitorability improvement are not yet separate persisted stages.
+
+## First Live Verification
+The first fully verified end-to-end shadow run came from:
+1. `project_id`: `3eb6f116-29da-4574-8180-71e169aa6855`
+2. `input_batch_id`: `07cbb135-0037-45a8-a875-95720b64c53e`
+3. `agentic_run_id`: `01bd9386-a758-47ab-b823-fd657cbe850a`
+
+Verified results from Cloud SQL:
+1. Deterministic baseline for the same batch:
+  - `document_count = 4`
+  - `extracted_row_count = 143`
+  - `normalized_supply_count = 143`
+2. Shadow extraction output:
+  - `candidate_count = 159`
+  - `matched_deterministic_candidate = 143`
+  - `agentic_only_candidate = 16`
+  - `agentic_split_from_deterministic_candidate = 0`
+3. Shadow qualification output:
+  - `qualified_supply = 52`
+  - `bundle_or_mixed_scope = 50`
+  - `scope_or_activity = 32`
+  - `heading_or_chapter = 19`
+  - `unresolved = 6`
+4. Shadow summary metrics:
+  - `qualified_supply_count = 52`
+  - `rejected_candidate_count = 107`
+  - `monitorable_supply_count = 2`
+
+This first live run proves the intended architecture:
+1. preserve the deterministic baseline for comparison,
+2. broaden candidate recall beyond deterministic extraction,
+3. classify the broader candidate set into useful vs noisy buckets before later normalization and mapping work.
+
+Examples of `agentic_only_candidate` rows recovered in the first verified run:
+1. `RED SUMINISTRO DE AGUA POTABLE`
+2. `RED AGUAS RESIDUALES`
+3. `DISTRIBUCIÓN ELÉCTRICA NORMALIZADA`
+4. `TABLEROS`
+5. `SISTEMA DE AIRE ACONDICIONADO`
+6. `APARATOS SANITARIOS`
+
+Those examples also show the current limitation clearly: many `agentic_only_candidate` rows are section or system labels, which is why the qualification layer still rejects or downgrades many of them. That is acceptable for the first shadow slice because it proves the intended shape:
+1. broaden extraction first,
+2. classify afterward,
+3. compare honestly against deterministic precision and recall.
+
+## Immediate Next Steps
+The next work should tighten the shadow pipeline in this order:
+
+1. Fix `project_id` propagation on persisted shadow artifacts.
+- In the first verified run, `project_input_agentic_candidates.project_id` is null because the shadow run is created during analysis before the batch is bound to the project.
+- This must be fixed or backfilled so project-scoped candidate and judgment reads are reliable.
+
+2. Make comparison reads robust against pre-project and post-project lifecycle timing.
+- Comparison endpoints should prefer stable joins through:
+  - `agentic_run_id`
+  - `input_batch_id`
+  - `document_id`
+- They should not rely on `project_id` alone until propagation is correct.
+
+3. Add explicit persisted stages for:
+- normalization enrichment,
+- shadow normalized supplies,
+- monitorability and mapping judgments.
+
+4. Upgrade extraction from a heuristic table-only shadow pass into the fuller retrieval-assisted design described below.
+- first expand candidate context retrieval,
+- then add task-specific model judgments,
+- then compare deterministic vs agentic spans in Arize.
+
+5. Expand source coverage.
+- Priority should stay on the existing high-value row-emitting path first.
+- After that, evaluate whether PDF and DOCX text/table recovery adds real supply recall.
+
+6. Keep deterministic and shadow comparison measurable in Arize.
+- The shadow path should eventually expose:
+  - extraction recall improvement,
+  - qualification precision improvement,
+  - monitorability coverage improvement,
+  - unresolved rate by variant.
+
 ## Goal
 1. Build a shadow agentic retrieval variant that starts from the same uploaded contractual documents and can derive its own extracted candidates end to end.
 2. Improve true-supply qualification, normalization quality, and market-monitorable coverage without breaking provenance.
