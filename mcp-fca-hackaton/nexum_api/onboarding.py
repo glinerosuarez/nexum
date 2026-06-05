@@ -5,6 +5,8 @@ from typing import Any
 
 from psycopg import Connection
 
+from .project_input_batches import bind_input_batch_to_project
+
 ALLOWED_PROJECT_STATES = {
     "planificacion",
     "en_ejecucion",
@@ -410,6 +412,7 @@ def create_project_with_bootstrap(
     fecha_fin_planeada = payload.get("fecha_fin_planeada")
     fecha_inicio_real = payload.get("fecha_inicio_real")
     presupuesto_total = safe_money(payload.get("presupuesto_total"))
+    input_batch_id = str(payload.get("input_batch_id") or "").strip() or None
 
     with conn.cursor() as cur:
         cur.execute(
@@ -437,6 +440,14 @@ def create_project_with_bootstrap(
         if not row:
             raise ValueError("No pudimos crear el proyecto.")
         project_id = str(row["id"])
+
+    if input_batch_id:
+        bind_input_batch_to_project(
+            conn,
+            created_by_profile_id=creator_profile_id,
+            input_batch_id=input_batch_id,
+            project_id=project_id,
+        )
 
     _ensure_demo_project_memberships(conn, project_id, creator_profile_id)
 

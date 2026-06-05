@@ -1,6 +1,6 @@
 import { Topbar } from "@/components/dashboard/Topbar";
 import { AgentRunFlow } from "@/components/dashboard/AgentRunFlow";
-import { getProjectBasic } from "@/lib/dashboard-data";
+import { getProjectBasic, getSupplySelectionInputs } from "@/lib/dashboard-data";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +10,14 @@ interface AgentRunPageProps {
 
 export default async function AgentRunPage({ params }: AgentRunPageProps) {
   const { id: projectId } = await params;
-  const project = await getProjectBasic(projectId);
+  const [project, selectionInputs] = await Promise.all([
+    getProjectBasic(projectId),
+    getSupplySelectionInputs(projectId).catch(() => null),
+  ]);
+  const normalizedSupplyCount =
+    selectionInputs?.row_counts?.normalized_supply_count
+    ?? selectionInputs?.normalized_supplies?.length
+    ?? 0;
 
   return (
     <>
@@ -25,7 +32,11 @@ export default async function AgentRunPage({ params }: AgentRunPageProps) {
         >
           Proyecto creado correctamente.
         </div>
-        <AgentRunFlow projectId={projectId} />
+        <AgentRunFlow
+          projectId={projectId}
+          shouldAutoRun={normalizedSupplyCount > 0}
+          normalizedSupplyCount={normalizedSupplyCount}
+        />
       </div>
     </>
   );

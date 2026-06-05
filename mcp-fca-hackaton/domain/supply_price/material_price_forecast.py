@@ -5,8 +5,20 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections.abc import Mapping
+from decimal import Decimal
 from typing import Any
 
+from domain.observability.arize_tracing import (
+    current_trace_id,
+    force_flush,
+    mark_span_error,
+    mark_span_ok,
+    set_span_attributes,
+    start_as_current_span,
+    tracing_enabled,
+    tracing_status,
+)
 from domain.project import postgres_read as sb
 from domain.supply_price import supply_price_store as store
 from domain.supply_price.price_data import (
@@ -29,12 +41,14 @@ def _ok(**payload: Any) -> dict[str, Any]:
 
 
 def _json_safe(value: Any) -> Any:
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {str(key): _json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(item) for item in value]
     if isinstance(value, uuid.UUID):
         return str(value)
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
     return value
 
 
@@ -91,6 +105,9 @@ def _selected_supply_metadata(supply: dict[str, Any]) -> dict[str, Any]:
         "cantidad_planeada": supply.get("cantidad_planeada"),
         "precio_unitario_budget": supply.get("precio_unitario_budget"),
         "subtotal_budget": supply.get("subtotal_budget"),
+        "input_batch_id": supply.get("input_batch_id"),
+        "normalized_supply_id": supply.get("normalized_supply_id"),
+        "extracted_row_ids": supply.get("extracted_row_ids") or [],
     }
 
 
@@ -198,7 +215,46 @@ def _forecast_for_source(
     }
 
 
-def material_price_forecast(
+def _extract_persisted_selection_supplies(selection_inputs: dict[str, Any]) -> list[dict[str, Any]]:
+    batch = selection_inputs.get("batch") or {}
+    input_batch_id = batch.get("id")
+    normalized_supplies = selection_inputs.get("normalized_supplies") or []
+    supplies: list[dict[str, Any]] = []
+    for normalized_supply in normalized_supplies:
+        supply_name = str(
+            normalized_supply.get("display_name")
+            or normalized_supply.get("normalized_name")
+            or ""
+        ).strip()
+        if not supply_name:
+            continue
+
+        quantity_total = normalized_supply.get("quantity_total")
+        unit_price = normalized_supply.get("unit_price_reference")
+        subtotal = normalized_supply.get("total_price_reference")
+        if subtotal is None and quantity_total is not None and unit_price is not None:
+            try:
+                subtotal = float(quantity_total) * float(unit_price)
+            except Exception:
+                subtotal = None
+
+        supplies.append(
+            {
+                "supply_id": None,
+                "supply_name": supply_name,
+                "unidad_medida": normalized_supply.get("normalized_unit"),
+                "cantidad_planeada": quantity_total,
+                "precio_unitario_budget": unit_price,
+                "subtotal_budget": subtotal,
+                "input_batch_id": input_batch_id,
+                "normalized_supply_id": normalized_supply.get("id"),
+                "extracted_row_ids": normalized_supply.get("extracted_row_ids") or [],
+            }
+        )
+    return supplies
+
+
+def _material_price_forecast_impl(
     user_id: str,
     project_id: str,
     run_id: str | None = None,
@@ -211,6 +267,7 @@ def material_price_forecast(
     overrun_threshold_pct: float = 10.0,
     trigger: str = "mcp",
     dry_run: bool = False,
+    trace_id: str | None = None,
 ) -> dict[str, Any]:
     """Forecast construction material prices for supplies used in a project budget."""
     if horizon_months < 1 or horizon_months > 24:
@@ -242,7 +299,54 @@ def material_price_forecast(
         return budget
 
     resolved_project_id = budget.get("project_id")
-    supplies = _extract_budget_supplies(budget)
+    selection_inputs = sb.get_project_supply_selection_inputs(
+        user_id,
+        project_id,
+        access_token=access_token,
+    )
+    selection_batch = selection_inputs.get("batch") if selection_inputs.get("success") else None
+    selection_documents = selection_inputs.get("documents") if selection_inputs.get("success") else []
+    selection_normalized_supplies = (
+        selection_inputs.get("normalized_supplies") if selection_inputs.get("success") else []
+    )
+    persisted_supplies = (
+        _extract_persisted_selection_supplies(selection_inputs)
+        if selection_inputs.get("success")
+        else []
+    )
+    supplies = persisted_supplies or _extract_budget_supplies(budget)
+    selection_source = (
+        "persisted_normalized_inputs" if persisted_supplies else "budget_snapshot_items"
+    )
+    selection_diagnostics = {
+        "input_batch_id": selection_batch.get("id") if isinstance(selection_batch, dict) else None,
+        "input_batch_status": selection_batch.get("status") if isinstance(selection_batch, dict) else None,
+        "document_count": len(selection_documents or []),
+        "extracted_row_count": int(
+            sum(int(doc.get("extracted_row_count") or 0) for doc in (selection_documents or []))
+        ),
+        "normalized_supply_count": len(selection_normalized_supplies or []),
+        "persisted_supply_count": len(persisted_supplies),
+        "parse_failed_document_count": sum(
+            1 for doc in (selection_documents or []) if doc.get("parse_status") == "parse_failed"
+        ),
+        "metadata_only_document_count": sum(
+            1 for doc in (selection_documents or []) if doc.get("parse_status") == "metadata_only"
+        ),
+        "unsupported_document_count": sum(
+            1
+            for doc in (selection_documents or [])
+            if doc.get("parse_status") == "unsupported_for_supply_rows"
+        ),
+        "row_emitting_document_count": sum(
+            1 for doc in (selection_documents or []) if int(doc.get("extracted_row_count") or 0) > 0
+        ),
+    }
+    selection_diagnostics["qualified_supply_count"] = selection_diagnostics["normalized_supply_count"]
+    selection_diagnostics["rejected_candidate_count"] = max(
+        selection_diagnostics["extracted_row_count"] - selection_diagnostics["qualified_supply_count"],
+        0,
+    )
     if material_queries:
         supplies = [
             s
@@ -273,7 +377,7 @@ def material_price_forecast(
             horizon_months=horizon_months,
             history_months=history_months,
             overrun_threshold_pct=overrun_threshold_pct,
-            options={"dry_run": dry_run, "region": "US"},
+            options={"dry_run": dry_run, "region": "US", "trace_id": trace_id},
             selected_supplies=selected_supplies,
             access_token=access_token,
         )
@@ -317,8 +421,11 @@ def material_price_forecast(
                 "status": "completed",
                 "counters": counters,
                 "budget_summary": empty_budget,
+                "selection_source": selection_source,
             },
             persistence={"enabled": persistence_enabled, "warning": persistence_warning},
+            selection_source=selection_source,
+            selection_diagnostics=selection_diagnostics,
             message=(
                 "No budget supplies found"
                 + (" for the given material_queries." if material_queries else ".")
@@ -357,6 +464,9 @@ def material_price_forecast(
                 {
                     "supply_id": supply.get("supply_id"),
                     "supply_name": supply.get("supply_name"),
+                    "input_batch_id": supply.get("input_batch_id"),
+                    "normalized_supply_id": supply.get("normalized_supply_id"),
+                    "extracted_row_ids": supply.get("extracted_row_ids") or [],
                     "mapping_strategy": "unmapped",
                     "source_id": None,
                     "source_name": None,
@@ -382,12 +492,15 @@ def material_price_forecast(
         cache_key = series.get("source_id") or series.get("key")
         source_row = series.get("source_row") or {}
         source_mappings.append(
-            {
-                "supply_id": supply.get("supply_id"),
-                "supply_name": supply.get("supply_name"),
-                "mapping_strategy": "configured_source" if source_row.get("id") else "keyword_fallback",
-                "source_id": series.get("source_id"),
-                "source_name": source_row.get("source_name") or series.get("label"),
+                {
+                    "supply_id": supply.get("supply_id"),
+                    "supply_name": supply.get("supply_name"),
+                    "input_batch_id": supply.get("input_batch_id"),
+                    "normalized_supply_id": supply.get("normalized_supply_id"),
+                    "extracted_row_ids": supply.get("extracted_row_ids") or [],
+                    "mapping_strategy": "configured_source" if source_row.get("id") else "keyword_fallback",
+                    "source_id": series.get("source_id"),
+                    "source_name": source_row.get("source_name") or series.get("label"),
                 "source_url": source_row.get("source_url"),
                 "series_key": series.get("key"),
                 "series_id": series.get("fred_series_id"),
@@ -648,15 +761,308 @@ def material_price_forecast(
             "counters": counters,
             "budget_summary": budget_impact,
             "duration_ms": int((time.monotonic() - started) * 1000),
+            "selection_source": selection_source,
         },
         persistence={
             "enabled": persistence_enabled,
             "dry_run": dry_run,
             "warning": persistence_warning,
         },
+        selection_source=selection_source,
+        selection_diagnostics=selection_diagnostics,
         disclaimer=(
             "Forecasts use US PPI indices from FRED as market proxies. "
             "Values are index trends, not local currency unit prices. "
             "Set FRED_API_KEY for higher-rate API access; CSV fallback is used otherwise."
         ),
     )
+
+
+def material_price_forecast(
+    user_id: str,
+    project_id: str,
+    run_id: str | None = None,
+    horizon_months: int = 6,
+    material_queries: list[str] | None = None,
+    history_months: int = 36,
+    access_token: str | None = None,
+    *,
+    persist: bool = True,
+    overrun_threshold_pct: float = 10.0,
+    trigger: str = "mcp",
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    final_result: dict[str, Any] | None = None
+    with start_as_current_span(
+        "material_price_forecast",
+        kind="CHAIN",
+        attributes={
+            "project.id": project_id,
+            "user.id": user_id,
+            "run.id": run_id or "",
+            "pipeline.variant": "deterministic",
+            "pipeline.name": "supply_intelligence",
+            "forecast.horizon_months": horizon_months,
+            "forecast.history_months": history_months,
+            "run.trigger": trigger,
+            "run.dry_run": dry_run,
+            "run.persist_requested": persist,
+            "material_queries.count": len(material_queries or []),
+        },
+    ) as root_span:
+        trace_id = current_trace_id(root_span)
+        try:
+            result = _material_price_forecast_impl(
+                user_id=user_id,
+                project_id=project_id,
+                run_id=run_id,
+                horizon_months=horizon_months,
+                material_queries=material_queries,
+                history_months=history_months,
+                access_token=access_token,
+                persist=persist,
+                overrun_threshold_pct=overrun_threshold_pct,
+                trigger=trigger,
+                dry_run=dry_run,
+                trace_id=trace_id,
+            )
+        except Exception as exc:
+            mark_span_error(root_span, exc)
+            raise
+
+        if isinstance(result, dict):
+            result["observability"] = {
+                "arize_tracing_enabled": tracing_enabled(),
+                "arize_status": tracing_status(),
+                "trace_id": trace_id,
+            }
+
+        if not isinstance(result, dict) or not result.get("success"):
+            set_span_attributes(
+                root_span,
+                {
+                    "run.success": False,
+                    "run.error": result.get("error") if isinstance(result, dict) else "unknown",
+                },
+            )
+            mark_span_ok(root_span)
+            final_result = result
+        else:
+            run_payload = result.get("run") if isinstance(result.get("run"), dict) else {}
+            counters = run_payload.get("counters") if isinstance(run_payload.get("counters"), dict) else {}
+            supplies = result.get("supplies") if isinstance(result.get("supplies"), list) else []
+            materials = result.get("materials") if isinstance(result.get("materials"), list) else []
+            unmapped = result.get("unmapped_supplies") if isinstance(result.get("unmapped_supplies"), list) else []
+            alerts = result.get("alerts") if isinstance(result.get("alerts"), list) else []
+            budget_impact = result.get("budget_impact") if isinstance(result.get("budget_impact"), dict) else {}
+            selection_diagnostics = (
+                result.get("selection_diagnostics")
+                if isinstance(result.get("selection_diagnostics"), dict)
+                else {}
+            )
+
+            mapped_subtotal_budget = round(
+                sum(float(item.get("subtotal_budget") or 0) for item in materials),
+                2,
+            )
+            unmapped_subtotal_budget = round(
+                sum(float(item.get("subtotal_budget") or 0) for item in unmapped),
+                2,
+            )
+            series_keys_used = sorted(
+                {
+                    str(item.get("series_key"))
+                    for item in materials
+                    if item.get("series_key")
+                }
+            )
+            extracted_row_count = int(selection_diagnostics.get("extracted_row_count", 0) or 0)
+            normalized_supply_count = int(
+                selection_diagnostics.get("normalized_supply_count", 0) or 0
+            )
+            qualified_supply_count = int(
+                selection_diagnostics.get("qualified_supply_count", 0) or 0
+            )
+            rejected_candidate_count = int(
+                selection_diagnostics.get("rejected_candidate_count", 0) or 0
+            )
+
+            with start_as_current_span(
+                "document_ingest",
+                kind="CHAIN",
+                attributes={
+                    "selection.input_batch_id": selection_diagnostics.get("input_batch_id") or "",
+                    "selection.input_batch_status": selection_diagnostics.get("input_batch_status") or "",
+                    "selection.document_count": selection_diagnostics.get("document_count", 0),
+                    "selection.row_emitting_document_count": selection_diagnostics.get(
+                        "row_emitting_document_count",
+                        0,
+                    ),
+                    "selection.parse_failed_document_count": selection_diagnostics.get(
+                        "parse_failed_document_count",
+                        0,
+                    ),
+                    "selection.metadata_only_document_count": selection_diagnostics.get(
+                        "metadata_only_document_count",
+                        0,
+                    ),
+                    "selection.unsupported_document_count": selection_diagnostics.get(
+                        "unsupported_document_count",
+                        0,
+                    ),
+                },
+            ) as document_ingest_span:
+                mark_span_ok(document_ingest_span)
+
+            with start_as_current_span(
+                "row_extraction",
+                kind="CHAIN",
+                attributes={
+                    "selection.extracted_row_count": extracted_row_count,
+                    "selection.row_emitting_document_count": selection_diagnostics.get(
+                        "row_emitting_document_count",
+                        0,
+                    ),
+                    "selection.rows_per_row_emitting_document": (
+                        round(
+                            extracted_row_count
+                            / max(
+                                int(selection_diagnostics.get("row_emitting_document_count", 0)),
+                                1,
+                            ),
+                            2,
+                        )
+                        if selection_diagnostics.get("row_emitting_document_count")
+                        else 0.0
+                    ),
+                },
+            ) as row_extraction_span:
+                mark_span_ok(row_extraction_span)
+
+            with start_as_current_span(
+                "supply_qualification",
+                kind="CHAIN",
+                attributes={
+                    "selection.extracted_row_count": extracted_row_count,
+                    "selection.qualified_supply_count": qualified_supply_count,
+                    "selection.rejected_candidate_count": rejected_candidate_count,
+                    "selection.qualification_ratio": (
+                        round(qualified_supply_count / extracted_row_count, 4)
+                        if extracted_row_count
+                        else 0.0
+                    ),
+                    "selection.rejection_ratio": (
+                        round(rejected_candidate_count / extracted_row_count, 4)
+                        if extracted_row_count
+                        else 0.0
+                    ),
+                },
+            ) as qualification_span:
+                mark_span_ok(qualification_span)
+
+            with start_as_current_span(
+                "normalization",
+                kind="CHAIN",
+                attributes={
+                    "selection.normalized_supply_count": normalized_supply_count,
+                    "selection.qualified_supply_count": qualified_supply_count,
+                    "selection.normalization_ratio": (
+                        round(normalized_supply_count / qualified_supply_count, 4)
+                        if qualified_supply_count
+                        else 0.0
+                    ),
+                    "selection.dedupe_savings_count": max(
+                        qualified_supply_count - normalized_supply_count,
+                        0,
+                    ),
+                },
+            ) as normalization_span:
+                mark_span_ok(normalization_span)
+
+            with start_as_current_span(
+                "critical_supply_selection",
+                kind="CHAIN",
+                attributes={
+                    "selection.source": run_payload.get("selection_source") or result.get("selection_source"),
+                    "selection.selected_supply_count": counters.get("supplies_requested", len(supplies)),
+                    "selection.material_queries_count": len(material_queries or []),
+                    "selection.input_batch_id": selection_diagnostics.get("input_batch_id") or "",
+                    "selection.input_batch_status": selection_diagnostics.get("input_batch_status") or "",
+                    "selection.document_count": selection_diagnostics.get("document_count", 0),
+                    "selection.extracted_row_count": selection_diagnostics.get("extracted_row_count", 0),
+                    "selection.normalized_supply_count": selection_diagnostics.get("normalized_supply_count", 0),
+                    "selection.persisted_supply_count": selection_diagnostics.get("persisted_supply_count", 0),
+                    "selection.qualified_supply_count": selection_diagnostics.get("qualified_supply_count", 0),
+                    "selection.rejected_candidate_count": selection_diagnostics.get("rejected_candidate_count", 0),
+                },
+            ) as selection_span:
+                mark_span_ok(selection_span)
+
+            with start_as_current_span(
+                "market_mapping",
+                kind="CHAIN",
+                attributes={
+                    "mapping.mapped_supply_count": len(materials),
+                    "mapping.unmapped_supply_count": len(unmapped),
+                    "mapping.mapped_subtotal_budget": mapped_subtotal_budget,
+                    "mapping.unmapped_subtotal_budget": unmapped_subtotal_budget,
+                    "mapping.series_keys_used": series_keys_used,
+                    "mapping.coverage_ratio": round((len(materials) / len(supplies)), 4) if supplies else 0.0,
+                    "mapping.normalized_supply_coverage_ratio": (
+                        round(
+                            len(materials)
+                            / max(int(selection_diagnostics.get("normalized_supply_count", 0)), 1),
+                            4,
+                        )
+                        if selection_diagnostics.get("normalized_supply_count")
+                        else 0.0
+                    ),
+                },
+            ) as mapping_span:
+                mark_span_ok(mapping_span)
+
+            with start_as_current_span(
+                "forecast_and_risk",
+                kind="CHAIN",
+                attributes={
+                    "forecast.supplies_processed": counters.get("supplies_processed", 0),
+                    "forecast.forecasts_written": counters.get("forecasts_written", 0),
+                    "forecast.alerts_created": counters.get("alerts_created", 0),
+                    "forecast.error_count": counters.get("errors", 0),
+                    "budget.total_subtotal": budget_impact.get("total_budget_subtotal", 0),
+                    "budget.projected_subtotal": budget_impact.get("projected_subtotal", 0),
+                    "budget.delta_pct": budget_impact.get("estimated_indexed_delta_pct", 0),
+                    "budget.overrun_triggered": budget_impact.get("overrun_triggered", False),
+                    "alerts.count": len(alerts),
+                },
+            ) as forecast_span:
+                mark_span_ok(forecast_span)
+
+            set_span_attributes(
+                root_span,
+                {
+                    "run.success": True,
+                    "run.id": run_payload.get("id") or run_id or "",
+                    "run.status": run_payload.get("status") or "",
+                    "selection.source": run_payload.get("selection_source") or result.get("selection_source"),
+                    "selection.selected_supply_count": counters.get("supplies_requested", len(supplies)),
+                    "selection.input_batch_id": selection_diagnostics.get("input_batch_id") or "",
+                    "selection.document_count": selection_diagnostics.get("document_count", 0),
+                    "selection.extracted_row_count": selection_diagnostics.get("extracted_row_count", 0),
+                    "selection.normalized_supply_count": selection_diagnostics.get("normalized_supply_count", 0),
+                    "selection.qualified_supply_count": selection_diagnostics.get("qualified_supply_count", 0),
+                    "selection.rejected_candidate_count": selection_diagnostics.get("rejected_candidate_count", 0),
+                    "mapping.mapped_supply_count": len(materials),
+                    "mapping.unmapped_supply_count": len(unmapped),
+                    "mapping.coverage_ratio": round((len(materials) / len(supplies)), 4) if supplies else 0.0,
+                    "run.supplies_processed": counters.get("supplies_processed", 0),
+                    "run.error_count": counters.get("errors", 0),
+                    "run.forecasts_written": counters.get("forecasts_written", 0),
+                    "run.alerts_created": counters.get("alerts_created", 0),
+                },
+            )
+            mark_span_ok(root_span)
+            final_result = result
+
+    force_flush()
+    return final_result if final_result is not None else _error("material_price_forecast returned no result")

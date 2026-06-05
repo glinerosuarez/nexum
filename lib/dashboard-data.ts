@@ -185,6 +185,56 @@ export interface ProjectBasic {
   nombre: string;
 }
 
+export interface SupplySelectionInputDocument {
+  id: string;
+  filename: string;
+  source: string;
+  parse_status: string;
+  confidence: string;
+  content_hash: string;
+  extracted_row_count: number;
+  sheet_names: string[];
+  created_at: string;
+}
+
+export interface SupplySelectionInputBatch {
+  id: string;
+  project_id: string | null;
+  created_by_profile_id: string;
+  status: string;
+  merged_preview: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SupplySelectionNormalizedSupply {
+  id: string;
+  normalization_key: string;
+  display_name: string;
+  normalized_name: string;
+  normalized_unit: string | null;
+  normalized_category: string;
+  quantity_total: number | null;
+  unit_price_reference: number | null;
+  total_price_reference: number | null;
+  row_count: number;
+  source_count: number;
+  source_document_ids: string[];
+  extracted_row_ids: string[];
+}
+
+export interface SupplySelectionInputsPayload {
+  batch: SupplySelectionInputBatch | null;
+  documents: SupplySelectionInputDocument[];
+  normalized_supplies: SupplySelectionNormalizedSupply[];
+  row_counts?: {
+    document_count?: number;
+    extracted_row_count?: number;
+    normalized_supply_count?: number;
+    row_normalization_count?: number;
+  };
+}
+
 interface CurveSourcePhase {
   nombre: string;
   fecha_inicio: string | null;
@@ -287,6 +337,13 @@ export async function getProjectBasic(projectId: string): Promise<ProjectBasic |
   const path = `/projects/${encodeURIComponent(projectId)}/basic`;
   const payload = await nexumApiRequest<{ project: ProjectBasic | null }>(path);
   return payload.project;
+}
+
+export async function getSupplySelectionInputs(
+  projectId: string,
+): Promise<SupplySelectionInputsPayload | null> {
+  const path = `/projects/${encodeURIComponent(projectId)}/supply-selection-inputs`;
+  return nexumApiRequest<SupplySelectionInputsPayload>(path);
 }
 
 export async function projectExists(projectId: string): Promise<boolean> {

@@ -17,6 +17,9 @@
 #   VERTEX_LOCATION=us-central1
 #   VERTEX_MODEL=gemini-1.5-pro
 #   VERTEX_PROJECT_ID=$GCP_PROJECT_ID
+#   ARIZE_PROJECT_NAME=nexum-supply-intelligence
+#   ARIZE_API_KEY_SECRET=nexum-arize-api-key
+#   ARIZE_SPACE_ID_SECRET=nexum-arize-space-id
 
 set -euo pipefail
 
@@ -37,6 +40,9 @@ AGENT_BACKEND="${AGENT_BACKEND:-vertex}"
 VERTEX_LOCATION="${VERTEX_LOCATION:-us-central1}"
 VERTEX_MODEL="${VERTEX_MODEL:-gemini-1.5-pro}"
 VERTEX_PROJECT_ID="${VERTEX_PROJECT_ID:-$GCP_PROJECT_ID}"
+ARIZE_PROJECT_NAME="${ARIZE_PROJECT_NAME:-nexum-supply-intelligence}"
+ARIZE_API_KEY_SECRET="${ARIZE_API_KEY_SECRET:-nexum-arize-api-key}"
+ARIZE_SPACE_ID_SECRET="${ARIZE_SPACE_ID_SECRET:-nexum-arize-space-id}"
 
 IMAGE_URI="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${AR_REPO}/${SERVICE_NAME}:${IMAGE_TAG}"
 
@@ -49,7 +55,8 @@ gcloud services enable \
   cloudbuild.googleapis.com \
   artifactregistry.googleapis.com \
   aiplatform.googleapis.com \
-  iam.googleapis.com
+  iam.googleapis.com \
+  secretmanager.googleapis.com
 
 echo "==> Ensuring Artifact Registry repository exists: ${AR_REPO}"
 if ! gcloud artifacts repositories describe "$AR_REPO" --location="$GCP_REGION" >/dev/null 2>&1; then
@@ -80,6 +87,9 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars "VERTEX_PROJECT_ID=${VERTEX_PROJECT_ID}" \
   --set-env-vars "VERTEX_LOCATION=${VERTEX_LOCATION}" \
   --set-env-vars "VERTEX_MODEL=${VERTEX_MODEL}" \
+  --set-env-vars "ARIZE_PROJECT_NAME=${ARIZE_PROJECT_NAME}" \
+  --update-secrets "ARIZE_API_KEY=${ARIZE_API_KEY_SECRET}:latest" \
+  --update-secrets "ARIZE_SPACE_ID=${ARIZE_SPACE_ID_SECRET}:latest" \
   --set-env-vars "PYTHONUNBUFFERED=1"
 
 SERVICE_URL="$(gcloud run services describe "$SERVICE_NAME" --region "$GCP_REGION" --format='value(status.url)')"

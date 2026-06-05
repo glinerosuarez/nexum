@@ -329,5 +329,146 @@ class TestSupplyAgentSnapshotState(unittest.TestCase):
         self.assertEqual(snapshot.get("error_summary"), "Remote MCP timed out")
 
 
+class TestDashboardSummaryUsesLatestRun(unittest.TestCase):
+    def setUp(self):
+        app.dependency_overrides[resolve_principal] = lambda: Principal(
+            uid="firebase-user-1",
+            email="demo@example.com",
+        )
+        self.client = TestClient(app)
+
+    def tearDown(self):
+        app.dependency_overrides.clear()
+
+    def test_dashboard_prefers_latest_run_selected_supplies_over_seed_catalog(self):
+        conn = _DummyConn()
+        latest_run = {
+            "id": "run-123",
+            "started_at": "2026-06-03T17:02:21+00:00",
+            "finished_at": "2026-06-03T17:04:24+00:00",
+            "metadata": {
+                "selected_supplies": [
+                    {
+                        "supply_name": "HABITACIONES Y PASILLOS",
+                        "unidad_medida": "",
+                        "cantidad_planeada": 1,
+                        "precio_unitario_budget": 940000000,
+                        "subtotal_budget": 940000000,
+                        "normalized_supply_id": "norm-heading",
+                    },
+                    {
+                        "supply_name": "Contractual Window Assembly",
+                        "unidad_medida": "und",
+                        "cantidad_planeada": 20,
+                        "precio_unitario_budget": 500000,
+                        "subtotal_budget": 10000000,
+                        "normalized_supply_id": "norm-1",
+                    },
+                    {
+                        "supply_name": "Contractual HVAC Line",
+                        "unidad_medida": "ml",
+                        "cantidad_planeada": 80,
+                        "precio_unitario_budget": 250000,
+                        "subtotal_budget": 20000000,
+                        "normalized_supply_id": "norm-2",
+                    },
+                ],
+                "source_mappings": [
+                    {
+                        "normalized_supply_id": "norm-heading",
+                        "error_code": "no_price_source",
+                        "error_message": "No active row in supply_price_sources and no keyword match.",
+                    },
+                    {
+                        "normalized_supply_id": "norm-1",
+                        "error_code": "no_price_source",
+                        "error_message": "No active row in supply_price_sources and no keyword match.",
+                    },
+                    {
+                        "normalized_supply_id": "norm-2",
+                        "series_key": "steel",
+                        "error_code": None,
+                        "error_message": None,
+                    },
+                ],
+            },
+        }
+
+        with patch("nexum_api.app.get_conn", side_effect=lambda: _dummy_conn_ctx(conn)):
+            with patch("nexum_api.app._coerce_profile", return_value="profile-1"):
+                with patch("nexum_api.app._resolve_project_for_user", return_value="project-1"):
+                    with patch(
+                        "nexum_api.app._project_summary_row",
+                        return_value={
+                            "id": "project-1",
+                            "nombre": "Proyecto",
+                            "estado": "en_ejecucion",
+                            "avance_global_percent": 10,
+                            "avance_planeado_percent": 12,
+                            "presupuesto_total": 50000000,
+                            "gasto_ejecutado": 1000000,
+                            "spi": 0.9,
+                            "cpi": 1.1,
+                            "incidentes_abiertos": 0,
+                        },
+                    ):
+                        with patch(
+                            "nexum_api.app._list_supplies_for_project",
+                            return_value=[
+                                {
+                                    "id": "seed-1",
+                                    "nombre": "Formaleta metalica",
+                                    "tipo": "subcontrato",
+                                    "unidad_medida": "m2",
+                                    "precio_referencia": 42000,
+                                    "precio_actual": 42000,
+                                    "variacion_precio_abs": 0,
+                                    "variacion_precio_pct": 0,
+                                    "tiene_actualizacion_precio": False,
+                                    "fecha_precio_actualizacion": None,
+                                    "disponibilidad": "agotado",
+                                    "es_critico": True,
+                                    "exposicion_presupuestal": 999999999,
+                                    "cantidad_planeada_total": 1,
+                                    "cantidad_ejecutada_total": 0,
+                                    "ordenes_pendientes": 0,
+                                    "proyectos_impactados": 1,
+                                }
+                            ],
+                        ):
+                            with patch(
+                                "nexum_api.app._project_alert_rows",
+                                return_value=[
+                                    {
+                                        "alert_id": "seed-alert",
+                                        "supply_id": "seed-1",
+                                        "nombre": "Formaleta metalica",
+                                        "tipo": "subcontrato",
+                                        "disponibilidad": "agotado",
+                                        "mensaje": "seed alert",
+                                        "abierta_desde": "2026-06-01T00:00:00+00:00",
+                                        "exposicion": 999999999,
+                                    }
+                                ],
+                            ):
+                                with patch("nexum_api.app._latest_agent_run", return_value=latest_run):
+                                    with patch(
+                                        "nexum_api.app._project_financial_totals",
+                                        return_value={
+                                            "ordenes_prioritarias": 0,
+                                            "saldo_por_pagar": 0,
+                                            "nomina_pagada": 0,
+                                        },
+                                    ):
+                                        response = self.client.get("/dashboard/summary?project_id=project-1")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["topCriticalSupplies"][0]["nombre"], "Contractual HVAC Line")
+        self.assertNotIn("HABITACIONES Y PASILLOS", [item["nombre"] for item in body["topCriticalSupplies"]])
+        self.assertEqual(body["alerts"], [])
+        self.assertEqual(body["totals"]["insumos_criticos_alerta"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

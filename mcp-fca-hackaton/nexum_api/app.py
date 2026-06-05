@@ -16,6 +16,15 @@ from pydantic import BaseModel, Field
 from .auth import Principal, resolve_principal
 from .db import DbConfigError, get_conn
 from .onboarding import create_project_with_bootstrap
+from .project_input_agentic import (
+    create_agentic_shadow_run,
+    get_project_supply_selection_comparison,
+    qualify_agentic_shadow_run,
+)
+from .project_input_batches import (
+    create_project_input_batch,
+    get_latest_project_input_batch,
+)
 
 
 app = FastAPI(title="nexum-api", version="0.1.0")
@@ -682,6 +691,133 @@ def _project_alert_rows(
     return alerts
 
 
+def _run_supply_key(payload: dict[str, Any], fallback: str) -> str:
+    for field in ("normalized_supply_id", "supply_id", "supply_name"):
+        value = payload.get(field)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return fallback
+
+
+def _run_supply_availability(mapping: dict[str, Any] | None) -> str:
+    if not mapping:
+        return "disponible"
+    if mapping.get("error_code"):
+        return "escaso"
+    return "disponible"
+
+
+def _run_supply_type(selected: dict[str, Any], mapping: dict[str, Any] | None) -> str:
+    for field in ("normalized_category", "tipo"):
+        value = selected.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+    if mapping and isinstance(mapping.get("series_key"), str) and mapping["series_key"].strip():
+        return "material"
+    return "material"
+
+
+def _dashboard_should_include_run_supply(
+    selected: dict[str, Any],
+    mapping: dict[str, Any] | None,
+) -> bool:
+    if not mapping:
+        return False
+
+    series_key = mapping.get("series_key")
+    if not isinstance(series_key, str) or not series_key.strip():
+        return False
+
+    supply_name = str(selected.get("supply_name") or "").strip()
+    if not supply_name:
+        return False
+
+    return True
+
+
+def _dashboard_supplies_from_latest_run(latest_run: dict[str, Any] | None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]] | None:
+    if not latest_run:
+        return None
+
+    metadata = latest_run.get("metadata") if isinstance(latest_run.get("metadata"), dict) else {}
+    selected_supplies = metadata.get("selected_supplies") if isinstance(metadata.get("selected_supplies"), list) else []
+    source_mappings = metadata.get("source_mappings") if isinstance(metadata.get("source_mappings"), list) else []
+    if not selected_supplies:
+        return None
+
+    mappings_by_key: dict[str, dict[str, Any]] = {}
+    for idx, raw_mapping in enumerate(source_mappings):
+        if not isinstance(raw_mapping, dict):
+            continue
+        mappings_by_key[_run_supply_key(raw_mapping, f"mapping:{idx}")] = raw_mapping
+
+    derived_supplies: list[dict[str, Any]] = []
+    derived_alerts: list[dict[str, Any]] = []
+    opened_at = latest_run.get("finished_at") or latest_run.get("started_at")
+    run_id = str(latest_run.get("id") or "latest-run")
+
+    for idx, raw_selected in enumerate(selected_supplies):
+        if not isinstance(raw_selected, dict):
+            continue
+
+        supply_name = str(raw_selected.get("supply_name") or "").strip()
+        if not supply_name:
+            continue
+
+        key = _run_supply_key(raw_selected, f"supply:{idx}")
+        mapping = mappings_by_key.get(key)
+        if not _dashboard_should_include_run_supply(raw_selected, mapping):
+            continue
+        exposure = _to_number(raw_selected.get("subtotal_budget"), 0)
+        unit_price = _to_number(raw_selected.get("precio_unitario_budget"), 0)
+        quantity = _to_number(raw_selected.get("cantidad_planeada"), 0)
+        availability = _run_supply_availability(mapping)
+        supply_type = _run_supply_type(raw_selected, mapping)
+
+        derived_supplies.append(
+            {
+                "id": key,
+                "nombre": supply_name,
+                "tipo": supply_type,
+                "unidad_medida": raw_selected.get("unidad_medida") or "",
+                "precio_referencia": unit_price,
+                "precio_actual": unit_price,
+                "variacion_precio_abs": 0,
+                "variacion_precio_pct": 0,
+                "tiene_actualizacion_precio": False,
+                "fecha_precio_actualizacion": None,
+                "disponibilidad": availability,
+                "es_critico": True,
+                "exposicion_presupuestal": exposure,
+                "cantidad_planeada_total": quantity,
+                "cantidad_ejecutada_total": 0,
+                "ordenes_pendientes": 0,
+                "proyectos_impactados": 1,
+            },
+        )
+
+        if mapping and mapping.get("error_code"):
+            derived_alerts.append(
+                {
+                    "alert_id": f"{run_id}:{key}",
+                    "supply_id": key,
+                    "nombre": supply_name,
+                    "tipo": supply_type,
+                    "disponibilidad": availability,
+                    "mensaje": str(mapping.get("error_message") or mapping.get("error_code")),
+                    "abierta_desde": opened_at,
+                    "exposicion": exposure,
+                },
+            )
+
+    derived_supplies.sort(key=lambda item: _to_number(item.get("exposicion_presupuestal"), 0), reverse=True)
+    derived_alerts.sort(key=lambda item: _to_number(item.get("exposicion"), 0), reverse=True)
+    return derived_supplies, derived_alerts
+
+
 class AgentRunRequest(BaseModel):
     project_id: str
     mode: str = "manual"
@@ -717,7 +853,116 @@ class ProjectCreateRequest(BaseModel):
     fecha_fin_planeada: str | None = None
     fecha_inicio_real: str | None = None
     presupuesto_total: float = 0
+    input_batch_id: str | None = None
     phases: list[PhaseInput] = Field(default_factory=list)
+
+
+class ProjectInputDocumentRequest(BaseModel):
+    client_document_id: str
+    filename: str
+    source: str
+    confidence: str = "baja"
+    parse_status: str
+    content_type: str | None = None
+    byte_size: int | None = None
+    content_hash: str
+    notes: list[str] = Field(default_factory=list)
+    sheet_names: list[str] = Field(default_factory=list)
+    preview: dict[str, Any] = Field(default_factory=dict)
+    extracted_row_count: int = 0
+
+
+class ProjectInputExtractedRowRequest(BaseModel):
+    client_row_id: str
+    client_document_id: str
+    source: str
+    source_ref: dict[str, Any] = Field(default_factory=dict)
+    raw_name: str
+    raw_unit: str | None = None
+    raw_category: str | None = None
+    raw_quantity: float | None = None
+    raw_unit_price: float | None = None
+    raw_total_price: float | None = None
+    normalized_name: str
+    normalized_unit: str | None = None
+    normalized_category: str
+    normalization_key: str
+    notes: list[str] = Field(default_factory=list)
+    raw_columns: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectInputNormalizedSupplyRequest(BaseModel):
+    client_normalized_key: str
+    display_name: str
+    normalized_name: str
+    normalized_unit: str | None = None
+    normalized_category: str
+    quantity_total: float | None = None
+    unit_price_reference: float | None = None
+    total_price_reference: float | None = None
+    extracted_row_ids: list[str] = Field(default_factory=list)
+    source_document_ids: list[str] = Field(default_factory=list)
+    row_count: int = 0
+    source_count: int = 0
+
+
+class ProjectInputRowNormalizationRequest(BaseModel):
+    client_extracted_row_id: str
+    client_normalized_key: str
+    normalization_reason: str
+
+
+class ProjectInputBatchCreateRequest(BaseModel):
+    status: str = "analyzed"
+    merged_preview: dict[str, Any] = Field(default_factory=dict)
+    documents: list[ProjectInputDocumentRequest] = Field(default_factory=list)
+    extracted_rows: list[ProjectInputExtractedRowRequest] = Field(default_factory=list)
+    normalized_supplies: list[ProjectInputNormalizedSupplyRequest] = Field(default_factory=list)
+    row_normalizations: list[ProjectInputRowNormalizationRequest] = Field(default_factory=list)
+
+
+class ProjectInputAgenticCandidateRequest(BaseModel):
+    shadow_candidate_id: str
+    input_batch_id: str
+    document_id: str
+    candidate_origin: str
+    deterministic_extracted_row_id: str | None = None
+    deterministic_normalized_supply_id: str | None = None
+    source_type: str
+    source_ref: dict[str, Any] = Field(default_factory=dict)
+    raw_text: str
+    raw_name: str
+    raw_unit: str | None = None
+    raw_category: str | None = None
+    raw_quantity: float | None = None
+    raw_unit_price: float | None = None
+    raw_total_price: float | None = None
+    context_before: list[str] = Field(default_factory=list)
+    context_after: list[str] = Field(default_factory=list)
+    section_labels: list[str] = Field(default_factory=list)
+    evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
+    raw_columns: dict[str, Any] = Field(default_factory=dict)
+    span_offsets: dict[str, Any] = Field(default_factory=dict)
+    table_signature: str | None = None
+    extraction_confidence: str
+    extraction_notes: list[str] = Field(default_factory=list)
+
+
+class ProjectInputAgenticRunCreateRequest(BaseModel):
+    pipeline_variant: str = "agentic_shadow"
+    status: str = "running"
+    model_name: str | None = None
+    retrieval_strategy: str | None = None
+    prompt_version: str | None = None
+    summary: dict[str, Any] = Field(default_factory=dict)
+    candidates: list[ProjectInputAgenticCandidateRequest] = Field(default_factory=list)
+
+
+class ProjectInputAgenticQualificationRequest(BaseModel):
+    model_name: str | None = None
+    retrieval_strategy: str | None = None
+    prompt_version: str | None = None
+    summary: dict[str, Any] = Field(default_factory=dict)
 
 
 def _run_mcp_tool(args: dict[str, Any], *, run_id: str | None = None) -> dict[str, Any]:
@@ -1040,6 +1285,75 @@ def health() -> dict[str, str]:
     return {"ok": "true", "service": "nexum-api"}
 
 
+@app.post("/project-input-batches")
+def create_project_input_batch_endpoint(
+    payload: ProjectInputBatchCreateRequest,
+    principal: Principal = Depends(resolve_principal),
+):
+    try:
+        with get_conn() as conn:
+            profile_id = _coerce_profile(conn, principal)
+            input_batch_id = create_project_input_batch(
+                conn,
+                created_by_profile_id=profile_id,
+                payload=payload.model_dump(),
+            )
+            conn.commit()
+            return {"ok": True, "input_batch_id": input_batch_id}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except DbConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/project-input-batches/{input_batch_id}/agentic-shadow-runs")
+def create_agentic_shadow_run_endpoint(
+    input_batch_id: str,
+    payload: ProjectInputAgenticRunCreateRequest,
+    principal: Principal = Depends(resolve_principal),
+):
+    try:
+        with get_conn() as conn:
+            profile_id = _coerce_profile(conn, principal)
+            result = create_agentic_shadow_run(
+                conn,
+                created_by_profile_id=profile_id,
+                input_batch_id=input_batch_id,
+                payload=payload.model_dump(),
+            )
+            conn.commit()
+            return {"ok": True, **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except DbConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/project-input-batches/{input_batch_id}/agentic-shadow-runs/{agentic_run_id}/qualify")
+def qualify_agentic_shadow_run_endpoint(
+    input_batch_id: str,
+    agentic_run_id: str,
+    payload: ProjectInputAgenticQualificationRequest,
+    principal: Principal = Depends(resolve_principal),
+):
+    try:
+        with get_conn() as conn:
+            profile_id = _coerce_profile(conn, principal)
+            result = qualify_agentic_shadow_run(
+                conn,
+                created_by_profile_id=profile_id,
+                input_batch_id=input_batch_id,
+                agentic_run_id=agentic_run_id,
+                payload=payload.model_dump(),
+            )
+            conn.commit()
+            return {"ok": True, **result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except DbConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/projects")
 def list_projects(request: Request, principal: Principal = Depends(resolve_principal)):
     try:
@@ -1140,6 +1454,42 @@ def project_curve_source(project_id: str, principal: Principal = Depends(resolve
         return payload
 
 
+@app.get("/projects/{project_id}/supply-selection-inputs")
+def project_supply_selection_inputs(
+    project_id: str,
+    principal: Principal = Depends(resolve_principal),
+):
+    with get_conn() as conn:
+        profile_id = _coerce_profile(conn, principal)
+        _assert_project_access(conn, profile_id, project_id)
+        payload = get_latest_project_input_batch(conn, project_id=project_id)
+        conn.commit()
+        return payload or {
+            "batch": None,
+            "documents": [],
+            "normalized_supplies": [],
+            "row_counts": {
+                "document_count": 0,
+                "extracted_row_count": 0,
+                "normalized_supply_count": 0,
+            "row_normalization_count": 0,
+            },
+        }
+
+
+@app.get("/projects/{project_id}/supply-selection-comparison")
+def project_supply_selection_comparison(
+    project_id: str,
+    principal: Principal = Depends(resolve_principal),
+):
+    with get_conn() as conn:
+        profile_id = _coerce_profile(conn, principal)
+        _assert_project_access(conn, profile_id, project_id)
+        payload = get_project_supply_selection_comparison(conn, project_id=project_id)
+        conn.commit()
+        return payload
+
+
 @app.delete("/projects/{project_id}")
 def delete_project(project_id: str, principal: Principal = Depends(resolve_principal)):
     with get_conn() as conn:
@@ -1175,6 +1525,10 @@ def dashboard_summary(
             str(s["id"]): _to_number(s.get("exposicion_presupuestal"), 0) for s in supplies
         }
         alerts = _project_alert_rows(conn, resolved_project_id, exposure_by_supply)
+        latest_run = _latest_agent_run(conn, resolved_project_id)
+        derived_from_run = _dashboard_supplies_from_latest_run(latest_run)
+        if derived_from_run:
+            supplies, alerts = derived_from_run
         top_critical = sorted(
             [s for s in supplies if s["es_critico"]],
             key=lambda item: float(item["exposicion_presupuestal"]),

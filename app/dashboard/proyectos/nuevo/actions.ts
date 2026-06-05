@@ -56,6 +56,7 @@ export async function createProjectAction(
       porcentaje_completado: phase.porcentaje_completado ?? 0,
       costo: phase.costo ?? 0,
     }));
+  const inputBatchId = (formData.get("input_batch_id") ?? "").toString().trim() || null;
 
   try {
     const response = await nexumApiRequest<{ ok: boolean; project_id: string }>(
@@ -71,6 +72,7 @@ export async function createProjectAction(
           fecha_fin_planeada: asDate(formData.get("fecha_fin_planeada")),
           fecha_inicio_real: asDate(formData.get("fecha_inicio_real")),
           presupuesto_total: asNumber(formData.get("presupuesto_total")) ?? 0,
+          input_batch_id: inputBatchId,
           phases,
         },
       },

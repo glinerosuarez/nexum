@@ -56,9 +56,10 @@ postcss.config.mjs
 mcp-fca-hackaton/     → MCP runtime, nexum-api backend, Cloud SQL agent persistence
 ```
 
-The repository now contains both:
-- the Next.js web app at the repo root, and
-- the supply-agent/backend runtime under `mcp-fca-hackaton/`.
+This repository is now the intended monorepo for the hackathon deliverable:
+- the Next.js web app lives at the repo root,
+- the supply-agent/backend runtime lives under `mcp-fca-hackaton/`,
+- the older external tree `baqhack/MCP_FCA_HACKATON` is no longer the canonical source for ongoing work.
 
 ## Design System
 

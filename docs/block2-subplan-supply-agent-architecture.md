@@ -26,6 +26,9 @@ Design and implement the architecture block for the supply agent so runtime beha
 
 This subplan focuses on architecture boundaries and run lifecycle contracts (not full tool internals or UI copy rollout).
 
+This architecture bucket is now the foundation for the active product direction:
+`an agentic supply-intelligence pipeline that converts contractual documents into traceable, market-monitorable critical supplies`
+
 Target outcome:
 1. `nexum-api` remains the single control-plane entrypoint for web-triggered runs.
 2. MCP remains the execution-plane tool host boundary.

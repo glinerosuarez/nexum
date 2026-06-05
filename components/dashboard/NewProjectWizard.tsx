@@ -18,7 +18,6 @@ import {
   type CreateActionState,
 } from "@/app/dashboard/proyectos/nuevo/actions";
 import {
-  parseContractFiles,
   type MergedContract,
   type ParsedPhase,
 } from "@/lib/contract-parser";
@@ -26,7 +25,7 @@ import {
 const createInitial: CreateActionState = { ok: false, message: null };
 
 const ACCEPTED_TYPES =
-  ".xml,.csv,.md,.markdown,.docx,.pdf,.png,.jpg,.jpeg,.webp,application/xml,text/xml,text/csv,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*";
+  ".xml,.csv,.xlsx,.md,.markdown,.docx,.pdf,.png,.jpg,.jpeg,.webp,application/xml,text/xml,text/csv,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/*";
 
 const MAX_BYTES_PER_FILE = 32 * 1024 * 1024;
 
@@ -39,6 +38,7 @@ export function NewProjectWizard() {
   const [parsed, setParsed] = useState<MergedContract | null>(null);
   const [phases, setPhases] = useState<ParsedPhase[]>([]);
   const [files, setFiles] = useState<File[]>([]);
+  const [inputBatchId, setInputBatchId] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -68,9 +68,27 @@ export function NewProjectWizard() {
     setParseError(null);
     setParsing(true);
     try {
-      const result = await parseContractFiles(files);
-      setParsed(result);
-      setPhases(result.fases ?? []);
+      const body = new FormData();
+      files.forEach((file) => body.append("files", file));
+
+      const response = await fetch("/api/project-input-batches/analyze", {
+        method: "POST",
+        body,
+      });
+      const payload = (await response
+        .json()
+        .catch(() => ({}))) as {
+        detail?: string;
+        preview?: MergedContract;
+        input_batch_id?: string;
+      };
+      if (!response.ok || !payload.preview || !payload.input_batch_id) {
+        throw new Error(payload.detail ?? "No pudimos analizar los archivos.");
+      }
+
+      setParsed(payload.preview);
+      setPhases(payload.preview.fases ?? []);
+      setInputBatchId(payload.input_batch_id);
     } catch (err) {
       setParseError(`No pudimos leer los archivos: ${(err as Error).message}`);
     } finally {
@@ -82,6 +100,7 @@ export function NewProjectWizard() {
     setParsed(null);
     setPhases([]);
     setFiles([]);
+    setInputBatchId(null);
     setParseError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
@@ -182,7 +201,7 @@ export function NewProjectWizard() {
           </Link>
           <div className="flex items-center gap-3">
             <span className="hidden text-xs text-ink-soft sm:inline">
-              El análisis ocurre en tu navegador.
+              El análisis y la persistencia ocurren en el servidor.
             </span>
             <button
               type="button"
@@ -283,6 +302,7 @@ export function NewProjectWizard() {
 
       <PhasesEditor phases={phases} onChange={setPhases} />
       <input type="hidden" name="phases_json" value={JSON.stringify(phases)} />
+      <input type="hidden" name="input_batch_id" value={inputBatchId ?? ""} />
 
       {createState.message && !createState.ok ? (
         <div
@@ -356,6 +376,7 @@ function DetectionBanner({
     msproject_xml: "Microsoft Project (XML)",
     apu_markdown: "APU (Markdown)",
     csv: "CSV",
+    xlsx: "Excel (XLSX)",
     markdown: "Markdown",
     docx: "Documento Word",
     pdf: "PDF",

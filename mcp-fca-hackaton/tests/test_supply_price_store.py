@@ -159,6 +159,7 @@ class TestSupplyPriceStore(unittest.TestCase):
                 error_count=2,
                 error_summary="2 supply error(s)",
                 source_mappings=[{"supply_id": "sup-1", "source_name": "fred_cement"}],
+                terminal_status="failed",
             )
 
         self.assertEqual(status, "failed")
@@ -175,6 +176,40 @@ class TestSupplyPriceStore(unittest.TestCase):
         self.assertEqual(lifecycle.get("status"), "failed")
         stages = [entry.get("stage") for entry in (lifecycle.get("history") or [])]
         self.assertIn("failed", stages)
+
+    def test_finalize_run_defaults_to_completed_even_with_supply_errors(self):
+        from domain.supply_price import supply_price_store as store
+
+        cursor = _FakeCursor(
+            fetchone_values=[
+                {
+                    "metadata": {
+                        "counters": {},
+                        "selected_supplies": [{"supply_name": "Madera"}],
+                    }
+                }
+            ]
+        )
+        conn = _FakeConn(cursor)
+
+        with patch("domain.supply_price.supply_price_store.get_conn", side_effect=lambda: _conn_ctx(conn)):
+            status = store.finalize_run(
+                "run-2",
+                started_monotonic=0.0,
+                counters={"supplies_processed": 0, "errors": 3},
+                budget_summary={"total_budget_subtotal": 50},
+                error_count=3,
+                error_summary="3 supply error(s)",
+            )
+
+        self.assertEqual(status, "completed")
+        _, update_params = next(
+            (entry for entry in cursor.executed if "update supply_agent_runs" in entry[0].lower()),
+        )
+        metadata = json.loads(update_params[3])
+        lifecycle = metadata.get("lifecycle") or {}
+        self.assertEqual(lifecycle.get("stage"), "completed")
+        self.assertEqual(lifecycle.get("status"), "completed")
 
     def test_check_tables_available_returns_false_for_missing_tables(self):
         from domain.supply_price import supply_price_store as store

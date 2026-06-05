@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from collections.abc import Mapping
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 from infra.postgres_client import PostgresConfigError, get_conn, json_dumps
@@ -28,7 +30,7 @@ def _coerce_json(value: Any) -> Any:
 
 
 def _json_safe(value: Any) -> Any:
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {str(key): _json_safe(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(item) for item in value]
@@ -36,6 +38,8 @@ def _json_safe(value: Any) -> Any:
         return str(value)
     if isinstance(value, datetime):
         return value.isoformat()
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
     return value
 
 
@@ -220,12 +224,11 @@ def finalize_run(
     error_count: int,
     error_summary: str | None = None,
     source_mappings: list[dict[str, Any]] | None = None,
+    terminal_status: str = "completed",
     access_token: str | None = None,
 ) -> str:
     del access_token
-    status = "completed"
-    if error_count > 0 and counters.get("supplies_processed", 0) == 0:
-        status = "failed"
+    status = terminal_status
     duration_ms = int((time.monotonic() - started_monotonic) * 1000)
     finished_at = _utc_now_iso()
 

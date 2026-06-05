@@ -10,6 +10,16 @@ build
 .vercel
 next-env.d.ts
 tsconfig.tsbuildinfo
+.tmp-parser/
+
+# Nested Python runtime artifacts inside mcp-fca-hackaton
+**/.venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/*.pyc
+**/.uv-cache/
 
 # Terraform local state/cache
 .terraform/

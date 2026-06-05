@@ -4,12 +4,21 @@ import Papa from "papaparse";
 export type ContractSource =
   | "msproject_xml"
   | "csv"
+  | "xlsx"
   | "apu_markdown"
   | "markdown"
   | "docx"
   | "pdf"
   | "image"
   | "filename";
+
+export type ParseConfidence = "alta" | "media" | "baja";
+
+export type InputParseStatus =
+  | "parsed_supply_rows"
+  | "metadata_only"
+  | "unsupported_for_supply_rows"
+  | "parse_failed";
 
 export interface ParsedPhase {
   nombre: string;
@@ -22,7 +31,7 @@ export interface ParsedPhase {
 
 export interface ParsedContract {
   source: ContractSource;
-  confidence: "alta" | "media" | "baja";
+  confidence: ParseConfidence;
   nombre: string;
   descripcion: string | null;
   ubicacion: string | null;
@@ -42,12 +51,252 @@ export interface ParsedContract {
 export interface FileParseSummary {
   filename: string;
   source: ContractSource;
-  confidence: "alta" | "media" | "baja";
+  confidence: ParseConfidence;
+  parse_status: InputParseStatus;
+  extracted_row_count: number;
   contributed: string[];
 }
 
 export interface MergedContract extends ParsedContract {
   files: FileParseSummary[];
+}
+
+export interface SupplySourceReference {
+  filename: string;
+  source: ContractSource;
+  parser: string;
+  row_index?: number | null;
+  line_number?: number | null;
+  sheet_name?: string | null;
+}
+
+export interface ExtractedSupplyRow {
+  id: string;
+  document_id: string;
+  source: ContractSource;
+  source_ref: SupplySourceReference;
+  raw_name: string;
+  raw_unit: string | null;
+  raw_category: string | null;
+  raw_quantity: number | null;
+  raw_unit_price: number | null;
+  raw_total_price: number | null;
+  normalized_name: string;
+  normalized_unit: string | null;
+  normalized_category: string;
+  normalization_key: string;
+  notes: string[];
+  raw_columns: Record<string, string | number | null>;
+}
+
+export interface NormalizedSupplyCandidate {
+  key: string;
+  display_name: string;
+  normalized_name: string;
+  normalized_unit: string | null;
+  normalized_category: string;
+  quantity_total: number | null;
+  unit_price_reference: number | null;
+  total_price_reference: number | null;
+  extracted_row_ids: string[];
+  source_document_ids: string[];
+  row_count: number;
+  source_count: number;
+}
+
+export interface RowNormalization {
+  extracted_row_id: string;
+  normalized_key: string;
+  normalization_reason: string;
+}
+
+export interface ParsedInputDocument {
+  id: string;
+  filename: string;
+  source: ContractSource;
+  confidence: ParseConfidence;
+  parse_status: InputParseStatus;
+  notes: string[];
+  preview: ParsedContract;
+  content_type: string;
+  byte_size: number;
+  sheet_names: string[];
+  extracted_row_count: number;
+}
+
+export interface ContractFileAnalysis {
+  merged_preview: MergedContract;
+  documents: ParsedInputDocument[];
+  extracted_rows: ExtractedSupplyRow[];
+  normalized_supplies: NormalizedSupplyCandidate[];
+  row_normalizations: RowNormalization[];
+}
+
+interface DraftExtractedSupplyRow {
+  source: ContractSource;
+  source_ref: SupplySourceReference;
+  raw_name: string;
+  raw_unit: string | null;
+  raw_category: string | null;
+  raw_quantity: number | null;
+  raw_unit_price: number | null;
+  raw_total_price: number | null;
+  normalized_name: string;
+  normalized_unit: string | null;
+  normalized_category: string;
+  normalization_key: string;
+  notes: string[];
+  raw_columns: Record<string, string | number | null>;
+}
+
+interface ParsedDocumentAnalysis {
+  preview: ParsedContract;
+  parse_status: InputParseStatus;
+  extracted_rows: DraftExtractedSupplyRow[];
+  sheet_names: string[];
+}
+
+interface TabularHeaderMap {
+  name: string;
+  unit: string | null;
+  quantity: string | null;
+  unitPrice: string | null;
+  totalPrice: string | null;
+  category: string | null;
+}
+
+interface WorksheetTableMatch {
+  header_row_index: number;
+  headers: string[];
+  header_map: TabularHeaderMap;
+}
+
+const xmlParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "",
+  removeNSPrefix: true,
+  parseTagValue: false,
+  trimValues: true,
+});
+
+const SOURCE_PRIORITY: Record<ContractSource, number> = {
+  msproject_xml: 5,
+  apu_markdown: 4,
+  pdf: 4,
+  xlsx: 4,
+  csv: 3,
+  markdown: 2,
+  docx: 1,
+  image: 0,
+  filename: 0,
+};
+
+const UNIT_ALIASES: Record<string, string> = {
+  kg: "kg",
+  kilo: "kg",
+  kilos: "kg",
+  kilogramo: "kg",
+  kilogramos: "kg",
+  g: "g",
+  gr: "g",
+  gramo: "g",
+  gramos: "g",
+  ton: "ton",
+  tonelada: "ton",
+  toneladas: "ton",
+  m: "m",
+  ml: "m",
+  metro: "m",
+  metros: "m",
+  m2: "m2",
+  mt2: "m2",
+  metro2: "m2",
+  metrocuadrado: "m2",
+  metroscuadrados: "m2",
+  m3: "m3",
+  mt3: "m3",
+  metro3: "m3",
+  metrocubico: "m3",
+  metroscubicos: "m3",
+  und: "und",
+  ud: "und",
+  un: "und",
+  unidad: "und",
+  unidades: "und",
+  ea: "und",
+  pza: "und",
+  pieza: "und",
+  piezas: "und",
+  l: "l",
+  lt: "l",
+  litro: "l",
+  litros: "l",
+  bolsa: "bolsa",
+  bolsas: "bolsa",
+  bulto: "bulto",
+  bultos: "bulto",
+};
+
+const HEADER_ALIASES: Record<
+  "name" | "unit" | "quantity" | "unitPrice" | "totalPrice" | "category",
+  string[]
+> = {
+  name: [
+    "descripcion",
+    "descripción",
+    "detalle",
+    "concepto",
+    "insumo",
+    "material",
+    "recurso",
+    "nombre",
+    "item descripcion",
+    "actividad",
+  ],
+  unit: [
+    "unidad",
+    "unidad medida",
+    "unidad de medida",
+    "um",
+    "u m",
+    "und",
+    "und.",
+    "unit",
+  ],
+  quantity: [
+    "cantidad",
+    "cant",
+    "qty",
+    "cantidad planeada",
+    "cantidad prevista",
+    "quantity",
+  ],
+  unitPrice: [
+    "vr unit",
+    "vr.unit",
+    "vr unitario",
+    "vr.unitario",
+    "valor unitario",
+    "precio unitario",
+    "precio_unitario",
+    "unit price",
+    "p u",
+  ],
+  totalPrice: [
+    "vr parcial",
+    "vr.parcial",
+    "valor parcial",
+    "subtotal",
+    "valor total",
+    "total",
+    "parcial",
+  ],
+  category: ["categoria", "categoría", "tipo", "clase"],
+};
+
+function asArray<T>(value: T | T[] | null | undefined): T[] {
+  if (Array.isArray(value)) return value;
+  return value == null ? [] : [value];
 }
 
 function isoDate(value: string | null | undefined): string | null {
@@ -61,6 +310,15 @@ function asNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
+}
+
+function stableHash(value: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash >>> 0).toString(16).padStart(8, "0");
 }
 
 function decodeName(raw: string): string {
@@ -120,289 +378,74 @@ function detectLocation(name: string): string | null {
   return null;
 }
 
-interface MsProjectTask {
-  name: string;
-  outlineNumber: string;
-  outlineLevel: number;
-  isSummary: boolean;
-  start: string | null;
-  finish: string | null;
-  actualStart: string | null;
-  percentComplete: number | null;
-  cost: number | null;
-  actualCost: number | null;
-  remainingCost: number | null;
+function normalizeText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
 }
 
-function toMsProjectTasks(
-  rawTasks: Record<string, unknown>[],
-  scaleCost: (raw: unknown) => number | null,
-): MsProjectTask[] {
-  return rawTasks.map((task) => ({
-    name: (task["Name"] as string | undefined) ?? "",
-    outlineNumber: (task["OutlineNumber"] as string | undefined) ?? "",
-    outlineLevel: Number(task["OutlineLevel"] ?? 0),
-    isSummary: task["Summary"] === "1" || task["Summary"] === 1,
-    start: isoDate(task["Start"] as string | undefined),
-    finish: isoDate(task["Finish"] as string | undefined),
-    actualStart: isoDate(task["ActualStart"] as string | undefined),
-    percentComplete: asNumber(task["PercentComplete"]),
-    cost: scaleCost(task["Cost"]),
-    actualCost: scaleCost(task["ActualCost"]),
-    remainingCost: scaleCost(task["RemainingCost"]),
-  }));
+function normalizeHeader(value: string): string {
+  return normalizeText(value).replace(/\s+/g, " ");
 }
 
-function aggregatePhaseCost(task: MsProjectTask, tasks: MsProjectTask[]): number | null {
-  if ((task.cost ?? 0) > 0) return task.cost;
-  if (!task.outlineNumber) return task.cost;
-
-  const prefix = `${task.outlineNumber}.`;
-  const descendants = tasks.filter((t) => t.outlineNumber.startsWith(prefix));
-  if (descendants.length === 0) return task.cost;
-
-  const directChildren = descendants.filter(
-    (t) => t.outlineLevel === task.outlineLevel + 1 && (t.cost ?? 0) > 0,
-  );
-  const directChildrenCost = directChildren.reduce((sum, t) => sum + (t.cost ?? 0), 0);
-  if (directChildrenCost > 0) return directChildrenCost;
-
-  const leafCost = descendants
-    .filter((t) => !t.isSummary && (t.cost ?? 0) > 0)
-    .reduce((sum, t) => sum + (t.cost ?? 0), 0);
-  if (leafCost > 0) return leafCost;
-
-  const maxDescendantCost = descendants.reduce(
-    (max, t) => Math.max(max, t.cost ?? 0),
-    0,
-  );
-  return maxDescendantCost > 0 ? maxDescendantCost : task.cost;
+function normalizeUnit(value: string | null | undefined): string | null {
+  const normalized = normalizeText(value ?? "");
+  if (!normalized) return null;
+  return UNIT_ALIASES[normalized.replace(/\s+/g, "")] ?? normalized.replace(/\s+/g, "");
 }
 
-// MS Project XML stores costs as integers scaled by 10^CurrencyDigits.
-// CurrencyDigits is typically 2, so the integer "122910015242" represents
-// 1,229,100,152.42. Without this scaling the dashboard shows a number two
-// orders of magnitude too large.
-function parseMsProjectXml(xmlText: string, filename: string): ParsedContract {
-  const parser = new XMLParser({
-    ignoreAttributes: true,
-    removeNSPrefix: true,
-    parseTagValue: false,
-    trimValues: true,
-  });
-
-  const result = emptyResult(filename, "msproject_xml");
-
-  let doc: unknown;
-  try {
-    doc = parser.parse(xmlText);
-  } catch (err) {
-    result.notas.push(`No se pudo parsear el XML: ${(err as Error).message}`);
-    return result;
+function detectSupplyCategory(rawName: string, rawCategory?: string | null): string {
+  const text = `${rawCategory ?? ""} ${rawName}`.toLowerCase();
+  if (
+    text.includes("mano de obra") ||
+    text.includes("oficial") ||
+    text.includes("ayudante") ||
+    text.includes("labor")
+  ) {
+    return "mano_obra";
   }
-
-  const project = (doc as { Project?: Record<string, unknown> } | undefined)
-    ?.Project;
-  if (!project) {
-    result.notas.push("El XML no parece ser un archivo de Microsoft Project.");
-    return result;
+  if (
+    text.includes("equipo") ||
+    text.includes("maquina") ||
+    text.includes("máquina") ||
+    text.includes("retroexcavadora") ||
+    text.includes("compresor")
+  ) {
+    return "equipo";
   }
-
-  const currencyDigits = Number(project["CurrencyDigits"] ?? 2);
-  const costScale = Math.pow(10, Number.isFinite(currencyDigits) ? currencyDigits : 2);
-  const scaleCost = (raw: unknown): number | null => {
-    const n = asNumber(raw);
-    if (n == null) return null;
-    return n / costScale;
-  };
-
-  const title = (project["Title"] as string | undefined) ?? "";
-  const projectName = (project["Name"] as string | undefined) ?? "";
-  const startDate = isoDate(project["StartDate"] as string | undefined);
-  const finishDate = isoDate(project["FinishDate"] as string | undefined);
-  const currency = (project["CurrencyCode"] as string | undefined) ?? null;
-
-  const tasksContainer = project["Tasks"] as Record<string, unknown> | undefined;
-  const taskList: Record<string, unknown>[] = (() => {
-    if (!tasksContainer) return [];
-    const t = tasksContainer["Task"];
-    if (!t) return [];
-    return Array.isArray(t)
-      ? (t as Record<string, unknown>[])
-      : [t as Record<string, unknown>];
-  })();
-  const tasks = toMsProjectTasks(taskList, scaleCost);
-
-  const summaryTask = tasks.find(
-    (task) => task.outlineLevel === 0,
-  );
-  const rootTask =
-    tasks.find(
-      (task) => task.outlineLevel === 1,
-    ) ?? summaryTask;
-
-  const nombre =
-    rootTask?.name ||
-    title ||
-    decodeName(projectName) ||
-    decodeName(filename);
-
-  const presupuesto = rootTask?.cost ?? summaryTask?.cost ?? null;
-  const costoReal = rootTask?.actualCost ?? summaryTask?.actualCost ?? null;
-  const costoRestante =
-    rootTask?.remainingCost ??
-    summaryTask?.remainingCost ??
-    null;
-  const porcentaje = rootTask?.percentComplete ?? summaryTask?.percentComplete ?? null;
-
-  const fechaInicioReal = rootTask?.actualStart ?? summaryTask?.actualStart ?? null;
-
-  // Use contractual project window first, then task-derived dates.
-  const fechaInicio = startDate ?? rootTask?.start ?? summaryTask?.start ?? null;
-  const fechaFin = finishDate ?? rootTask?.finish ?? summaryTask?.finish ?? null;
-
-  const phaseTasks = tasks
-    .filter((task) => {
-      return task.outlineLevel === 2 && task.isSummary;
-    })
-    .slice(0, 50);
-
-  const fases: ParsedPhase[] = phaseTasks.map((task, idx) => ({
-    nombre: cleanPhaseName(task.name || `Fase ${idx + 1}`),
-    sort_order: idx + 1,
-    fecha_inicio: task.start,
-    fecha_fin: task.finish,
-    porcentaje_completado: task.percentComplete,
-    costo: aggregatePhaseCost(task, tasks),
-  }));
-
-  if (fases.length === 0) {
-    const subtasks = tasks
-      .filter((task) => {
-        return task.outlineLevel >= 2 && task.outlineLevel <= 3;
-      })
-      .slice(0, 12);
-    fases.push(
-      ...subtasks.map((task, idx) => ({
-        nombre: cleanPhaseName(task.name || `Fase ${idx + 1}`),
-        sort_order: idx + 1,
-        fecha_inicio: task.start,
-        fecha_fin: task.finish,
-        porcentaje_completado: task.percentComplete,
-        costo: task.cost,
-      })),
-    );
+  if (
+    text.includes("subcontrato") ||
+    text.includes("instalacion") ||
+    text.includes("instalación") ||
+    text.includes("servicio")
+  ) {
+    return "subcontrato";
   }
-
-  result.confidence = "alta";
-  result.nombre = nombre.trim();
-  result.descripcion = title && title !== nombre ? title : null;
-  result.fecha_inicio_planeada = fechaInicio;
-  result.fecha_fin_planeada = fechaFin;
-  result.fecha_inicio_real = fechaInicioReal;
-  result.presupuesto_total = presupuesto;
-  result.moneda = currency;
-  result.costo_real = costoReal;
-  result.costo_restante = costoRestante;
-  result.porcentaje_completado = porcentaje;
-  result.fases = fases;
-
-  const taskCount = taskList.length;
-  if (taskCount > 0) {
-    result.notas.push(
-      `Detectadas ${taskCount} tareas y ${fases.length} fase${fases.length === 1 ? "" : "s"} en el cronograma.`,
-    );
-  }
-  const location = detectLocation(nombre);
-  if (location) result.ubicacion = location;
-  return result;
+  return "material";
 }
 
-function parseCsv(text: string, filename: string): ParsedContract {
-  const result = emptyResult(filename, "csv");
+function makeNormalizationKey(
+  normalizedName: string,
+  normalizedUnit: string | null,
+  normalizedCategory: string,
+): string {
+  return [
+    normalizedName || "sin_nombre",
+    normalizedUnit || "sin_unidad",
+    normalizedCategory || "material",
+  ].join("|");
+}
 
-  const parsed = Papa.parse<Record<string, string>>(text, {
-    header: true,
-    skipEmptyLines: true,
-    transformHeader: (h) => h.trim().toLowerCase(),
-  });
-
-  if (parsed.errors.length > 0) {
-    result.notas.push(`CSV con ${parsed.errors.length} advertencias de parseo.`);
-  }
-
-  const rows = parsed.data ?? [];
-  if (rows.length === 0) {
-    result.notas.push("El CSV está vacío o sin encabezados.");
-    return result;
-  }
-
-  const firstRow = rows[0];
-  const nombre =
-    pickField(firstRow, ["nombre", "name", "proyecto", "project"]) ??
-    decodeName(filename);
-  const ubicacion = pickField(firstRow, [
-    "ubicacion",
-    "ubicación",
-    "location",
-    "ciudad",
-  ]);
-  const fechaInicio = isoDate(
-    pickField(firstRow, [
-      "fecha_inicio",
-      "fecha inicio",
-      "start_date",
-      "start",
-      "inicio",
-    ]),
-  );
-  const fechaFin = isoDate(
-    pickField(firstRow, [
-      "fecha_fin",
-      "fecha fin",
-      "end_date",
-      "finish",
-      "fin",
-    ]),
-  );
-  const presupuesto = pickNumber(firstRow, [
-    "presupuesto",
-    "budget",
-    "valor",
-    "valor_contrato",
-    "monto",
-  ]);
-
-  result.confidence = nombre ? "media" : "baja";
-  result.nombre = nombre;
-  result.ubicacion = ubicacion ?? detectLocation(nombre);
-  result.fecha_inicio_planeada = fechaInicio;
-  result.fecha_fin_planeada = fechaFin;
-  result.presupuesto_total = presupuesto;
-
-  const phaseRows = rows
-    .map((r, idx) => {
-      const nm = pickField(r, ["fase", "phase", "etapa", "nombre", "name"]);
-      if (!nm) return null;
-      return {
-        nombre: cleanPhaseName(nm),
-        sort_order: idx + 1,
-        fecha_inicio: isoDate(
-          pickField(r, ["fecha_inicio", "start_date", "start"]),
-        ),
-        fecha_fin: isoDate(pickField(r, ["fecha_fin", "end_date", "finish"])),
-        porcentaje_completado: pickNumber(r, ["porcentaje", "percent", "avance"]),
-        costo: pickNumber(r, ["costo", "cost", "presupuesto", "monto"]),
-      } satisfies ParsedPhase;
-    })
-    .filter((p): p is ParsedPhase => p !== null);
-
-  if (phaseRows.length > 1) {
-    result.fases = phaseRows.slice(0, 50);
-    result.notas.push(`${phaseRows.length} fase(s) detectadas desde filas.`);
-  }
-
-  return result;
+function similarName(a: string, b: string): boolean {
+  const na = normalizeText(a);
+  const nb = normalizeText(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  return na.includes(nb) || nb.includes(na);
 }
 
 function pickField(
@@ -422,14 +465,9 @@ function pickNumber(
 ): number | null {
   const raw = pickField(row, keys);
   if (!raw) return null;
-  const cleaned = parseMonetary(raw);
-  return cleaned;
+  return parseMonetary(raw);
 }
 
-// Parses strings like "$ 122,910,015,242", "$1,229,100,152.42",
-// "1.229.100.152,42", "23%", "$ 939,966,467.13" → number.
-// Handles US (1,234,567.89), European/Colombian (1.234.567,89) and
-// thousands-only commas (1,234,567 → 1234567).
 function parseMonetary(raw: string): number | null {
   if (!raw) return null;
   let s = String(raw)
@@ -444,22 +482,20 @@ function parseMonetary(raw: string): number | null {
   const hasDot = s.includes(".");
 
   if (hasComma && hasDot) {
-    // Whichever appears last is the decimal separator.
     if (s.lastIndexOf(",") > s.lastIndexOf(".")) {
       s = s.replace(/\./g, "").replace(/,/g, ".");
     } else {
       s = s.replace(/,/g, "");
     }
   } else if (hasComma) {
-    // Comma alone: decimal only if it has exactly 1-2 trailing digits
-    // and no repeated thousand-grouping pattern.
-    const isDecimal = /^-?\d+(?:\d{3})*,\d{1,2}$/.test(s) && !/,\d{3}(?:,|$)/.test(s);
+    const isDecimal =
+      /^-?\d+(?:\d{3})*,\d{1,2}$/.test(s) && !/,\d{3}(?:,|$)/.test(s);
     s = isDecimal ? s.replace(",", ".") : s.replace(/,/g, "");
   } else if (hasDot) {
-    // Dot alone: decimal only when single dot followed by 1-2 digits.
     const dots = (s.match(/\./g) ?? []).length;
-    const looksDecimal = dots === 1 && /\.\d{1,2}$/.test(s);
-    if (!looksDecimal) s = s.replace(/\./g, "");
+    if (dots > 1) {
+      s = s.replace(/\./g, "");
+    }
   }
 
   const n = Number(s);
@@ -479,287 +515,6 @@ function parseDateDMY(value: string): string | null {
   const d = new Date(Date.UTC(year, month - 1, day));
   return d.toISOString().slice(0, 10);
 }
-
-async function extractPdfText(file: File): Promise<string> {
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const { getDocument, GlobalWorkerOptions } = pdfjs;
-  const data = new Uint8Array(await file.arrayBuffer());
-  if (typeof window !== "undefined") {
-    GlobalWorkerOptions.workerSrc = new URL(
-      "pdfjs-dist/build/pdf.worker.mjs",
-      import.meta.url,
-    ).toString();
-  }
-  const pdf = await getDocument({ data }).promise;
-
-  let text = "";
-  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
-    const page = await pdf.getPage(pageNum);
-    const content = await page.getTextContent();
-    for (const item of content.items as Array<{ str?: string; hasEOL?: boolean }>) {
-      if (!item?.str) continue;
-      text += item.str;
-      text += item.hasEOL ? "\n" : " ";
-    }
-    text += "\n";
-  }
-  return text;
-}
-
-function parseControlBudgetPdf(text: string, filename: string): ParsedContract {
-  const result = emptyResult(filename, "pdf");
-  const normalized = text
-    .replace(/\u00a0/g, " ")
-    .replace(/[ \t]+/g, " ");
-
-  const bacRaw =
-    normalized.match(/BAC\s*=\s*([0-9\.\,]+)\s*\$/i)?.[1] ??
-    normalized.match(/BAC\s*=\s*\$?\s*([0-9\.\,]+)/i)?.[1] ??
-    null;
-  const bac = bacRaw ? parseMonetary(bacRaw) : null;
-
-  const rowRegex =
-    /(?:^|\n)\s*(\d{1,2})\s+(\d{1,2}\/\d{1,2}\/\d{4})\s+\$\s*([0-9\.\,]+)\s+([0-9\.\,]+)\s*\$/gm;
-  type BudgetRow = {
-    week: number;
-    fecha: string;
-    cptp: number;
-    cptr: number;
-  };
-  const rows: BudgetRow[] = [];
-  let match: RegExpExecArray | null = null;
-  while ((match = rowRegex.exec(normalized)) !== null) {
-    const week = Number(match[1]);
-    const fecha = parseDateDMY(match[2]);
-    const cptp = parseMonetary(match[3]);
-    const cptr = parseMonetary(match[4]);
-    if (!fecha || cptp == null || cptr == null || !Number.isFinite(week)) continue;
-    rows.push({ week, fecha, cptp, cptr });
-  }
-
-  const rowsWithEV = rows.filter((r) => r.week > 0 && r.cptr > 0);
-  const latest = rowsWithEV.length > 0 ? rowsWithEV[rowsWithEV.length - 1] : null;
-  const pctFromEv =
-    bac != null && bac > 0 && latest ? (latest.cptr / bac) * 100 : null;
-
-  if (bac != null) {
-    result.presupuesto_total = bac;
-    result.moneda = "COP";
-  }
-  if (pctFromEv != null && Number.isFinite(pctFromEv)) {
-    result.porcentaje_completado = Math.max(0, Math.min(100, pctFromEv));
-    result.confidence = "alta";
-  } else if (bac != null) {
-    result.confidence = "media";
-  }
-  if (rows.length > 0) {
-    result.fecha_inicio_planeada = rows[0].fecha;
-    result.fecha_fin_planeada = rows[rows.length - 1].fecha;
-  }
-  if (latest) {
-    result.notas.push(
-      `Control presupuesto detectado: EV semana ${latest.week} = ${latest.cptr.toLocaleString("es-CO")} COP (${(pctFromEv ?? 0).toFixed(2)}%).`,
-    );
-  } else if (rows.length > 0) {
-    result.notas.push(
-      `Control presupuesto detectado con ${rows.length} filas semanales; sin EV acumulado válido.`,
-    );
-  } else {
-    result.notas.push(
-      "PDF detectado pero no se identificó la tabla de control de presupuesto.",
-    );
-  }
-  return result;
-}
-
-// Parses APU (Análisis de Precios Unitarios) markdown tables produced by
-// tableConvert. Structure: pipe-delimited rows where the first column is
-// the ITEM number ("1", "1.1", "1.1.1", …) or a totals label.
-// Top-level chapters (single number, e.g. "1", "2") become phases with the
-// VR.PARCIAL column as their cost. The grand total is taken from the
-// "VALOR TOTAL DE LA PROPUESTA" row when present.
-function parseApuMarkdown(text: string, filename: string): ParsedContract {
-  const result = emptyResult(filename, "apu_markdown");
-
-  const lines = text.split(/\r?\n/);
-  type Row = string[];
-  const rows: Row[] = [];
-  for (const line of lines) {
-    if (!line.trim().startsWith("|")) continue;
-    if (/^\|\s*-+/.test(line)) continue;
-    const cells = line
-      .split("|")
-      .slice(1, -1)
-      .map((c) => c.trim());
-    if (cells.length === 0) continue;
-    rows.push(cells);
-  }
-
-  if (rows.length === 0) {
-    result.notas.push("No detectamos tablas APU en este archivo.");
-    return result;
-  }
-
-  const phases: ParsedPhase[] = [];
-  let valorTotal: number | null = null;
-  let nombreChapterCero: string | null = null;
-  let subtotalCostoDirecto: number | null = null;
-
-  for (const row of rows) {
-    if (row.length < 2) continue;
-    const item = (row[0] ?? "").trim();
-    const desc = (row[1] ?? "").trim();
-    const parcial = row.length >= 6 ? parseMonetary(row[5] ?? "") : null;
-
-    if (/^VALOR\s+TOTAL/i.test(item) || /^VALOR\s+TOTAL/i.test(desc)) {
-      valorTotal = parcial ?? parseMonetary(row[row.length - 1] ?? "");
-      continue;
-    }
-    if (/^SUBTOTAL\s+COSTO\s+DIRECTO/i.test(item)) {
-      subtotalCostoDirecto = parcial ?? parseMonetary(row[row.length - 1] ?? "");
-      continue;
-    }
-    if (/^ADMINISTRACI|^IMPREVISTOS|^UTILIDAD|^IVA/i.test(item) || /^ADMINISTRACI|^IMPREVISTOS|^UTILIDAD|^IVA/i.test(desc)) {
-      continue;
-    }
-    if (!item && desc && !nombreChapterCero && /[A-ZÁÉÍÓÚÑ]{4,}/.test(desc)) {
-      nombreChapterCero = desc;
-      continue;
-    }
-    if (/^\d+$/.test(item) && desc) {
-      phases.push({
-        nombre: cleanPhaseName(desc),
-        sort_order: phases.length + 1,
-        fecha_inicio: null,
-        fecha_fin: null,
-        porcentaje_completado: null,
-        costo: parcial,
-      });
-    }
-  }
-
-  if (phases.length === 0 && nombreChapterCero == null) {
-    result.notas.push("No detectamos capítulos APU.");
-    return result;
-  }
-
-  result.confidence = phases.length > 0 ? "alta" : "media";
-  result.nombre = nombreChapterCero ?? decodeName(filename);
-  result.presupuesto_total = valorTotal ?? subtotalCostoDirecto ?? null;
-  result.moneda = "COP";
-  result.fases = phases;
-
-  const location = detectLocation(result.nombre);
-  if (location) result.ubicacion = location;
-
-  result.notas.push(
-    `APU detectada: ${phases.length} capítulo(s)${valorTotal != null ? `, total ${valorTotal.toLocaleString("es-CO")} COP` : subtotalCostoDirecto != null ? `, costo directo ${subtotalCostoDirecto.toLocaleString("es-CO")} COP` : ""}.`,
-  );
-
-  return result;
-}
-
-function parseGenericMarkdown(text: string, filename: string): ParsedContract {
-  // If it looks like an APU table, use the rich parser.
-  if (/\|\s*ITEM\s*\|/i.test(text) || /VALOR\s+TOTAL\s+DE\s+LA\s+PROPUESTA/i.test(text)) {
-    return parseApuMarkdown(text, filename);
-  }
-
-  const result = emptyResult(filename, "markdown");
-  const titleMatch = text.match(/^#\s+(.+)$/m);
-  if (titleMatch) {
-    result.nombre = titleMatch[1].trim().slice(0, 200);
-    result.confidence = "media";
-  }
-  result.notas.push(
-    "Documento Markdown sin tabla APU detectada. Usamos el primer encabezado como nombre.",
-  );
-  return result;
-}
-
-function parseFallback(
-  filename: string,
-  source: ContractSource,
-  textHint: string,
-): ParsedContract {
-  const result = emptyResult(filename, source);
-  result.notas.push(textHint);
-  return result;
-}
-
-export async function parseContractFile(file: File): Promise<ParsedContract> {
-  const filename = file.name || "contrato";
-  const ext = filename.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? "";
-  const mime = file.type ?? "";
-
-  if (ext === "xml" || mime === "text/xml" || mime === "application/xml") {
-    const text = await file.text();
-    return parseMsProjectXml(text, filename);
-  }
-
-  if (ext === "csv" || mime === "text/csv" || mime === "application/csv") {
-    const text = await file.text();
-    return parseCsv(text, filename);
-  }
-
-  if (ext === "md" || ext === "markdown" || mime === "text/markdown") {
-    const text = await file.text();
-    return parseGenericMarkdown(text, filename);
-  }
-
-  if (ext === "docx" || mime.includes("wordprocessingml")) {
-    return parseFallback(
-      filename,
-      "docx",
-      "Documento Word detectado. Completa los datos manualmente o sube el cronograma en XML/CSV/MD para autocompletado.",
-    );
-  }
-
-  if (ext === "pdf" || mime === "application/pdf") {
-    try {
-      const text = await extractPdfText(file);
-      return parseControlBudgetPdf(text, filename);
-    } catch (err) {
-      return parseFallback(
-        filename,
-        "pdf",
-        `PDF detectado pero no pudimos extraer su contenido: ${(err as Error).message}`,
-      );
-    }
-  }
-
-  if (
-    mime.startsWith("image/") ||
-    ["png", "jpg", "jpeg", "webp", "gif"].includes(ext)
-  ) {
-    return parseFallback(
-      filename,
-      "image",
-      "Imagen detectada. Usamos el nombre del archivo como referencia; completa los demás campos.",
-    );
-  }
-
-  return parseFallback(
-    filename,
-    "filename",
-    `Formato .${ext || "desconocido"} no autodetectable. Completa los campos manualmente.`,
-  );
-}
-
-// ---------- multi-file merge ----------
-
-// Priority for each field when merging multiple files. Higher = wins.
-// Order in array implies fallback if higher source has null.
-const SOURCE_PRIORITY: Record<ContractSource, number> = {
-  msproject_xml: 5,
-  apu_markdown: 4,
-  pdf: 4,
-  csv: 3,
-  markdown: 2,
-  docx: 1,
-  image: 0,
-  filename: 0,
-};
 
 function bestForField<T>(
   results: ParsedContract[],
@@ -809,8 +564,6 @@ function mergePhases(results: ParsedContract[]): ParsedPhase[] {
   if (xmlPhases.length === 0) return applyPdfProgress(apuPhases);
   if (apuPhases.length === 0) return applyPdfProgress(xmlPhases);
 
-  // Try to fuse: XML carries dates/% complete, APU carries cost.
-  // Fallback to sort_order/index when names don't match.
   const usedApuIndexes = new Set<number>();
   const merged = xmlPhases.map((xp, idx) => {
     let matchIndex = apuPhases.findIndex(
@@ -837,70 +590,299 @@ function mergePhases(results: ParsedContract[]): ParsedPhase[] {
   return applyPdfProgress(merged);
 }
 
-function similarName(a: string, b: string): boolean {
-  const norm = (s: string) =>
-    s
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9]+/g, " ")
-      .trim();
-  const na = norm(a);
-  const nb = norm(b);
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-  return na.includes(nb) || nb.includes(na);
+function buildTabularPreview(
+  rows: Record<string, string>[],
+  filename: string,
+  source: ContractSource,
+): ParsedContract {
+  const result = emptyResult(filename, source);
+  if (rows.length === 0) {
+    result.notas.push("El archivo tabular está vacío o sin filas legibles.");
+    return result;
+  }
+
+  const firstRow = rows[0];
+  const nombre =
+    pickField(firstRow, ["nombre", "name", "proyecto", "project"]) ??
+    decodeName(filename);
+  const ubicacion = pickField(firstRow, [
+    "ubicacion",
+    "ubicación",
+    "location",
+    "ciudad",
+  ]);
+  const fechaInicio = isoDate(
+    pickField(firstRow, [
+      "fecha_inicio",
+      "fecha inicio",
+      "start_date",
+      "start",
+      "inicio",
+    ]),
+  );
+  const fechaFin = isoDate(
+    pickField(firstRow, [
+      "fecha_fin",
+      "fecha fin",
+      "end_date",
+      "finish",
+      "fin",
+    ]),
+  );
+  const presupuesto = pickNumber(firstRow, [
+    "presupuesto",
+    "budget",
+    "valor",
+    "valor_contrato",
+    "monto",
+  ]);
+
+  result.confidence = nombre ? "media" : "baja";
+  result.nombre = nombre;
+  result.ubicacion = ubicacion ?? detectLocation(nombre);
+  result.fecha_inicio_planeada = fechaInicio;
+  result.fecha_fin_planeada = fechaFin;
+  result.presupuesto_total = presupuesto;
+
+  const phaseRows = rows
+    .map((row, idx) => {
+      const nm = pickField(row, ["fase", "phase", "etapa", "nombre", "name"]);
+      if (!nm) return null;
+      return {
+        nombre: cleanPhaseName(nm),
+        sort_order: idx + 1,
+        fecha_inicio: isoDate(
+          pickField(row, ["fecha_inicio", "start_date", "start"]),
+        ),
+        fecha_fin: isoDate(pickField(row, ["fecha_fin", "end_date", "finish"])),
+        porcentaje_completado: pickNumber(row, ["porcentaje", "percent", "avance"]),
+        costo: pickNumber(row, ["costo", "cost", "presupuesto", "monto"]),
+      } satisfies ParsedPhase;
+    })
+    .filter((phase): phase is ParsedPhase => phase !== null);
+
+  if (phaseRows.length > 1) {
+    result.fases = phaseRows.slice(0, 50);
+    result.notas.push(`${phaseRows.length} fase(s) detectadas desde filas.`);
+  }
+
+  return result;
 }
 
-export async function parseContractFiles(
-  files: File[],
-): Promise<MergedContract> {
-  if (files.length === 0) {
-    throw new Error("No hay archivos para analizar.");
-  }
-  const parsed = await Promise.all(files.map((f) => parseContractFile(f)));
+function detectSupplyHeaderMap(headers: string[]): TabularHeaderMap | null {
+  const keyedHeaders = Array.from({ length: headers.length }, (_, index) => {
+    const header = String(headers[index] ?? "");
+    return {
+      actual: header.trim().toLowerCase(),
+      normalized: normalizeHeader(header),
+    };
+  }).filter((header) => header.actual !== "");
+  const findHeader = (aliases: string[]): string | null => {
+    for (const alias of aliases) {
+      const normalizedAlias = normalizeHeader(alias);
+      const match = keyedHeaders.find((header) => header.normalized === normalizedAlias);
+      if (match) return match.actual;
+    }
+    for (const alias of aliases) {
+      const normalizedAlias = normalizeHeader(alias);
+      const match = keyedHeaders.find(
+        (header) =>
+          header.normalized.includes(normalizedAlias)
+          || normalizedAlias.includes(header.normalized),
+      );
+      if (match) return match.actual;
+    }
+    return null;
+  };
 
-  const nombre = bestForField(parsed, ["msproject_xml", "apu_markdown", "csv", "markdown", "docx", "pdf", "image", "filename"], (r) => r.nombre);
-  const descripcion = bestForField(parsed, null, (r) => r.descripcion);
-  const ubicacion = bestForField(parsed, null, (r) => r.ubicacion);
-  const fechaInicioP = bestForField(parsed, ["msproject_xml", "csv", "markdown", "apu_markdown"], (r) => r.fecha_inicio_planeada);
-  const fechaFinP = bestForField(parsed, ["msproject_xml", "csv", "markdown", "apu_markdown"], (r) => r.fecha_fin_planeada);
-  const fechaInicioR = bestForField(parsed, ["msproject_xml"], (r) => r.fecha_inicio_real);
-  const presupuesto = bestForField(parsed, ["apu_markdown", "msproject_xml", "csv"], (r) => r.presupuesto_total);
-  const moneda = bestForField(parsed, ["msproject_xml", "apu_markdown", "csv"], (r) => r.moneda);
-  const costoReal = bestForField(parsed, ["msproject_xml"], (r) => r.costo_real);
-  const costoRestante = bestForField(parsed, ["msproject_xml"], (r) => r.costo_restante);
-  const porcentaje = bestForField(parsed, ["pdf", "msproject_xml"], (r) => r.porcentaje_completado);
+  const name = findHeader(HEADER_ALIASES.name);
+  const quantity = findHeader(HEADER_ALIASES.quantity);
+  const unitPrice = findHeader(HEADER_ALIASES.unitPrice);
+  const totalPrice = findHeader(HEADER_ALIASES.totalPrice);
+  const unit = findHeader(HEADER_ALIASES.unit);
+  const category = findHeader(HEADER_ALIASES.category);
+
+  if (!name) return null;
+  if (!quantity && !unitPrice && !totalPrice) return null;
+
+  return { name, unit, quantity, unitPrice, totalPrice, category };
+}
+
+function toRawColumns(row: Record<string, string>): Record<string, string | number | null> {
+  const result: Record<string, string | number | null> = {};
+  for (const [key, value] of Object.entries(row)) {
+    result[key] = value ?? null;
+  }
+  return result;
+}
+
+function extractSupplyRowsFromTabularRecords(
+  rows: Record<string, string>[],
+  filename: string,
+  source: ContractSource,
+  headerMap: TabularHeaderMap,
+  options: { sheetName?: string; rowOffset?: number; parser: string },
+): DraftExtractedSupplyRow[] {
+  const extracted: DraftExtractedSupplyRow[] = [];
+
+  rows.forEach((row, idx) => {
+    const rawName = row[headerMap.name]?.trim() ?? "";
+    if (!rawName) return;
+
+    if (
+      /^subtotal|^valor total|^administraci|^imprevistos|^utilidad|^iva/i.test(rawName)
+    ) {
+      return;
+    }
+
+    const rawUnit = headerMap.unit ? row[headerMap.unit]?.trim() || null : null;
+    const rawCategory = headerMap.category
+      ? row[headerMap.category]?.trim() || null
+      : null;
+    const rawQuantity = headerMap.quantity
+      ? parseMonetary(row[headerMap.quantity] ?? "")
+      : null;
+    const rawUnitPrice = headerMap.unitPrice
+      ? parseMonetary(row[headerMap.unitPrice] ?? "")
+      : null;
+    const rawTotalPrice = headerMap.totalPrice
+      ? parseMonetary(row[headerMap.totalPrice] ?? "")
+      : null;
+
+    if (
+      rawUnit == null &&
+      rawQuantity == null &&
+      rawUnitPrice == null &&
+      rawTotalPrice == null
+    ) {
+      return;
+    }
+
+    const normalizedName = normalizeText(rawName);
+    if (!normalizedName) return;
+
+    const normalizedUnit = normalizeUnit(rawUnit);
+    const normalizedCategory = detectSupplyCategory(rawName, rawCategory);
+    const normalizationKey = makeNormalizationKey(
+      normalizedName,
+      normalizedUnit,
+      normalizedCategory,
+    );
+
+    extracted.push({
+      source,
+      source_ref: {
+        filename,
+        source,
+        parser: options.parser,
+        row_index: (options.rowOffset ?? 0) + idx + 1,
+        sheet_name: options.sheetName ?? null,
+      },
+      raw_name: rawName,
+      raw_unit: rawUnit,
+      raw_category: rawCategory,
+      raw_quantity: rawQuantity,
+      raw_unit_price: rawUnitPrice,
+      raw_total_price:
+        rawTotalPrice ??
+        (rawQuantity != null && rawUnitPrice != null
+          ? Number((rawQuantity * rawUnitPrice).toFixed(6))
+          : null),
+      normalized_name: normalizedName,
+      normalized_unit: normalizedUnit,
+      normalized_category: normalizedCategory,
+      normalization_key: normalizationKey,
+      notes: [],
+      raw_columns: toRawColumns(row),
+    });
+  });
+
+  return extracted;
+}
+
+function buildMergedPreview(documents: ParsedInputDocument[]): MergedContract {
+  const parsed = documents.map((document) => document.preview);
+  const firstFilename = documents[0]?.filename ?? "contrato";
+
+  const nombre = bestForField(
+    parsed,
+    [
+      "msproject_xml",
+      "apu_markdown",
+      "xlsx",
+      "csv",
+      "markdown",
+      "docx",
+      "pdf",
+      "image",
+      "filename",
+    ],
+    (result) => result.nombre,
+  );
+  const descripcion = bestForField(parsed, null, (result) => result.descripcion);
+  const ubicacion = bestForField(parsed, null, (result) => result.ubicacion);
+  const fechaInicioP = bestForField(
+    parsed,
+    ["msproject_xml", "xlsx", "csv", "markdown", "apu_markdown"],
+    (result) => result.fecha_inicio_planeada,
+  );
+  const fechaFinP = bestForField(
+    parsed,
+    ["msproject_xml", "xlsx", "csv", "markdown", "apu_markdown"],
+    (result) => result.fecha_fin_planeada,
+  );
+  const fechaInicioR = bestForField(parsed, ["msproject_xml"], (result) => result.fecha_inicio_real);
+  const presupuesto = bestForField(
+    parsed,
+    ["apu_markdown", "xlsx", "msproject_xml", "csv"],
+    (result) => result.presupuesto_total,
+  );
+  const moneda = bestForField(
+    parsed,
+    ["msproject_xml", "apu_markdown", "xlsx", "csv"],
+    (result) => result.moneda,
+  );
+  const costoReal = bestForField(parsed, ["msproject_xml"], (result) => result.costo_real);
+  const costoRestante = bestForField(
+    parsed,
+    ["msproject_xml"],
+    (result) => result.costo_restante,
+  );
+  const porcentaje = bestForField(parsed, ["pdf", "msproject_xml"], (result) => result.porcentaje_completado);
 
   const fases = mergePhases(parsed);
   const notas: string[] = [];
-  for (const r of parsed) {
-    for (const n of r.notas) notas.push(`(${r.raw_filename}) ${n}`);
-  }
+  parsed.forEach((result) => {
+    result.notas.forEach((note) => notas.push(`(${result.raw_filename}) ${note}`));
+  });
 
-  const fileSummaries: FileParseSummary[] = parsed.map((r) => {
+  const fileSummaries: FileParseSummary[] = documents.map((document) => {
     const contributed: string[] = [];
-    if (r === parsed.find((x) => x.source === nombre.source)) contributed.push("nombre");
-    if (r === parsed.find((x) => x.source === presupuesto.source)) contributed.push("presupuesto");
-    if (r.fases.length > 0) contributed.push("fases");
-    if (r.fecha_inicio_planeada || r.fecha_fin_planeada) contributed.push("fechas");
-    if (r.porcentaje_completado != null) contributed.push("avance");
+    if (document.preview.source === nombre.source) contributed.push("nombre");
+    if (document.preview.source === presupuesto.source) contributed.push("presupuesto");
+    if (document.preview.fases.length > 0) contributed.push("fases");
+    if (document.preview.fecha_inicio_planeada || document.preview.fecha_fin_planeada) {
+      contributed.push("fechas");
+    }
+    if (document.preview.porcentaje_completado != null) contributed.push("avance");
     return {
-      filename: r.raw_filename,
-      source: r.source,
-      confidence: r.confidence,
+      filename: document.filename,
+      source: document.source,
+      confidence: document.confidence,
+      parse_status: document.parse_status,
+      extracted_row_count: document.extracted_row_count,
       contributed,
     };
   });
 
   return {
-    source: nombre.source ?? parsed[0].source,
-    confidence: parsed.some((r) => r.confidence === "alta")
+    source: nombre.source ?? parsed[0]?.source ?? "filename",
+    confidence: parsed.some((result) => result.confidence === "alta")
       ? "alta"
-      : parsed.some((r) => r.confidence === "media")
+      : parsed.some((result) => result.confidence === "media")
         ? "media"
         : "baja",
-    nombre: nombre.value ?? decodeName(files[0].name),
+    nombre: nombre.value ?? decodeName(firstFilename),
     descripcion: descripcion.value,
     ubicacion: ubicacion.value,
     fecha_inicio_planeada: fechaInicioP.value,
@@ -914,9 +896,1070 @@ export async function parseContractFiles(
     fases,
     notas,
     raw_filename:
-      files.length === 1
-        ? files[0].name
-        : `${files.length} archivos combinados`,
+      documents.length === 1
+        ? firstFilename
+        : `${documents.length} archivos combinados`,
     files: fileSummaries,
   };
+}
+
+interface MsProjectTask {
+  name: string;
+  outlineNumber: string;
+  outlineLevel: number;
+  isSummary: boolean;
+  start: string | null;
+  finish: string | null;
+  actualStart: string | null;
+  percentComplete: number | null;
+  cost: number | null;
+  actualCost: number | null;
+  remainingCost: number | null;
+}
+
+function toMsProjectTasks(
+  rawTasks: Record<string, unknown>[],
+  scaleCost: (raw: unknown) => number | null,
+): MsProjectTask[] {
+  return rawTasks.map((task) => ({
+    name: (task.Name as string | undefined) ?? "",
+    outlineNumber: (task.OutlineNumber as string | undefined) ?? "",
+    outlineLevel: Number(task.OutlineLevel ?? 0),
+    isSummary: task.Summary === "1" || task.Summary === 1,
+    start: isoDate(task.Start as string | undefined),
+    finish: isoDate(task.Finish as string | undefined),
+    actualStart: isoDate(task.ActualStart as string | undefined),
+    percentComplete: asNumber(task.PercentComplete),
+    cost: scaleCost(task.Cost),
+    actualCost: scaleCost(task.ActualCost),
+    remainingCost: scaleCost(task.RemainingCost),
+  }));
+}
+
+function aggregatePhaseCost(task: MsProjectTask, tasks: MsProjectTask[]): number | null {
+  if ((task.cost ?? 0) > 0) return task.cost;
+  if (!task.outlineNumber) return task.cost;
+
+  const prefix = `${task.outlineNumber}.`;
+  const descendants = tasks.filter((candidate) => candidate.outlineNumber.startsWith(prefix));
+  if (descendants.length === 0) return task.cost;
+
+  const directChildren = descendants.filter(
+    (candidate) =>
+      candidate.outlineLevel === task.outlineLevel + 1 && (candidate.cost ?? 0) > 0,
+  );
+  const directChildrenCost = directChildren.reduce(
+    (sum, candidate) => sum + (candidate.cost ?? 0),
+    0,
+  );
+  if (directChildrenCost > 0) return directChildrenCost;
+
+  const leafCost = descendants
+    .filter((candidate) => !candidate.isSummary && (candidate.cost ?? 0) > 0)
+    .reduce((sum, candidate) => sum + (candidate.cost ?? 0), 0);
+  if (leafCost > 0) return leafCost;
+
+  const maxDescendantCost = descendants.reduce(
+    (max, candidate) => Math.max(max, candidate.cost ?? 0),
+    0,
+  );
+  return maxDescendantCost > 0 ? maxDescendantCost : task.cost;
+}
+
+function parseMsProjectXml(xmlText: string, filename: string): ParsedDocumentAnalysis {
+  const result = emptyResult(filename, "msproject_xml");
+
+  let doc: unknown;
+  try {
+    doc = xmlParser.parse(xmlText);
+  } catch (err) {
+    result.notas.push(`No se pudo parsear el XML: ${(err as Error).message}`);
+    return {
+      preview: result,
+      parse_status: "parse_failed",
+      extracted_rows: [],
+      sheet_names: [],
+    };
+  }
+
+  const project = (doc as { Project?: Record<string, unknown> } | undefined)?.Project;
+  if (!project) {
+    result.notas.push("El XML no parece ser un archivo de Microsoft Project.");
+    return {
+      preview: result,
+      parse_status: "metadata_only",
+      extracted_rows: [],
+      sheet_names: [],
+    };
+  }
+
+  const currencyDigits = Number(project.CurrencyDigits ?? 2);
+  const costScale = Math.pow(10, Number.isFinite(currencyDigits) ? currencyDigits : 2);
+  const scaleCost = (raw: unknown): number | null => {
+    const n = asNumber(raw);
+    if (n == null) return null;
+    return n / costScale;
+  };
+
+  const title = (project.Title as string | undefined) ?? "";
+  const projectName = (project.Name as string | undefined) ?? "";
+  const startDate = isoDate(project.StartDate as string | undefined);
+  const finishDate = isoDate(project.FinishDate as string | undefined);
+  const currency = (project.CurrencyCode as string | undefined) ?? null;
+
+  const tasksContainer = project.Tasks as Record<string, unknown> | undefined;
+  const taskList: Record<string, unknown>[] = (() => {
+    if (!tasksContainer) return [];
+    return asArray(tasksContainer.Task as Record<string, unknown> | Record<string, unknown>[]);
+  })();
+  const tasks = toMsProjectTasks(taskList, scaleCost);
+
+  const summaryTask = tasks.find((task) => task.outlineLevel === 0);
+  const rootTask = tasks.find((task) => task.outlineLevel === 1) ?? summaryTask;
+
+  const nombre =
+    rootTask?.name ||
+    title ||
+    decodeName(projectName) ||
+    decodeName(filename);
+
+  const presupuesto = rootTask?.cost ?? summaryTask?.cost ?? null;
+  const costoReal = rootTask?.actualCost ?? summaryTask?.actualCost ?? null;
+  const costoRestante = rootTask?.remainingCost ?? summaryTask?.remainingCost ?? null;
+  const porcentaje = rootTask?.percentComplete ?? summaryTask?.percentComplete ?? null;
+  const fechaInicioReal = rootTask?.actualStart ?? summaryTask?.actualStart ?? null;
+  const fechaInicio = startDate ?? rootTask?.start ?? summaryTask?.start ?? null;
+  const fechaFin = finishDate ?? rootTask?.finish ?? summaryTask?.finish ?? null;
+
+  const phaseTasks = tasks
+    .filter((task) => task.outlineLevel === 2 && task.isSummary)
+    .slice(0, 50);
+
+  const fases: ParsedPhase[] = phaseTasks.map((task, idx) => ({
+    nombre: cleanPhaseName(task.name || `Fase ${idx + 1}`),
+    sort_order: idx + 1,
+    fecha_inicio: task.start,
+    fecha_fin: task.finish,
+    porcentaje_completado: task.percentComplete,
+    costo: aggregatePhaseCost(task, tasks),
+  }));
+
+  if (fases.length === 0) {
+    const subtasks = tasks
+      .filter((task) => task.outlineLevel >= 2 && task.outlineLevel <= 3)
+      .slice(0, 12);
+    fases.push(
+      ...subtasks.map((task, idx) => ({
+        nombre: cleanPhaseName(task.name || `Fase ${idx + 1}`),
+        sort_order: idx + 1,
+        fecha_inicio: task.start,
+        fecha_fin: task.finish,
+        porcentaje_completado: task.percentComplete,
+        costo: task.cost,
+      })),
+    );
+  }
+
+  result.confidence = "alta";
+  result.nombre = nombre.trim();
+  result.descripcion = title && title !== nombre ? title : null;
+  result.fecha_inicio_planeada = fechaInicio;
+  result.fecha_fin_planeada = fechaFin;
+  result.fecha_inicio_real = fechaInicioReal;
+  result.presupuesto_total = presupuesto;
+  result.moneda = currency;
+  result.costo_real = costoReal;
+  result.costo_restante = costoRestante;
+  result.porcentaje_completado = porcentaje;
+  result.fases = fases;
+
+  if (taskList.length > 0) {
+    result.notas.push(
+      `Detectadas ${taskList.length} tareas y ${fases.length} fase${fases.length === 1 ? "" : "s"} en el cronograma.`,
+    );
+  }
+  const location = detectLocation(nombre);
+  if (location) result.ubicacion = location;
+
+  return {
+    preview: result,
+    parse_status: "metadata_only",
+    extracted_rows: [],
+    sheet_names: [],
+  };
+}
+
+function parseCsv(text: string, filename: string): ParsedDocumentAnalysis {
+  const parsed = Papa.parse<Record<string, string>>(text, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: (header) => header.trim().toLowerCase(),
+  });
+
+  const rows = parsed.data ?? [];
+  const result = buildTabularPreview(rows, filename, "csv");
+  if (parsed.errors.length > 0) {
+    result.notas.push(`CSV con ${parsed.errors.length} advertencias de parseo.`);
+  }
+  if (rows.length === 0) {
+    result.notas.push("El CSV está vacío o sin encabezados.");
+    return {
+      preview: result,
+      parse_status: "metadata_only",
+      extracted_rows: [],
+      sheet_names: [],
+    };
+  }
+
+  const headerMap = detectSupplyHeaderMap(parsed.meta.fields ?? []);
+  if (!headerMap) {
+    result.notas.push("CSV leído como vista previa, sin columnas de insumos/APU detectadas.");
+    return {
+      preview: result,
+      parse_status: "metadata_only",
+      extracted_rows: [],
+      sheet_names: [],
+    };
+  }
+
+  const extractedRows = extractSupplyRowsFromTabularRecords(rows, filename, "csv", headerMap, {
+    parser: "csv_supply_rows",
+    rowOffset: 1,
+  });
+  result.notas.push(
+    `CSV con ${extractedRows.length} fila${extractedRows.length === 1 ? "" : "s"} de insumos detectadas.`,
+  );
+
+  return {
+    preview: result,
+    parse_status: extractedRows.length > 0 ? "parsed_supply_rows" : "metadata_only",
+    extracted_rows: extractedRows,
+    sheet_names: [],
+  };
+}
+
+async function extractPdfText(file: File): Promise<string> {
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const { getDocument } = pdfjs;
+  const data = new Uint8Array(await file.arrayBuffer());
+  const pdf = await getDocument({
+    data,
+    disableWorker: true,
+  } as unknown as Parameters<typeof getDocument>[0]).promise;
+
+  let text = "";
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum += 1) {
+    const page = await pdf.getPage(pageNum);
+    const content = await page.getTextContent();
+    for (const item of content.items as Array<{ str?: string; hasEOL?: boolean }>) {
+      if (!item?.str) continue;
+      text += item.str;
+      text += item.hasEOL ? "\n" : " ";
+    }
+    text += "\n";
+  }
+  return text;
+}
+
+function parseControlBudgetPdf(text: string, filename: string): ParsedDocumentAnalysis {
+  const result = emptyResult(filename, "pdf");
+  const normalized = text.replace(/\u00a0/g, " ").replace(/[ \t]+/g, " ");
+
+  const bacRaw =
+    normalized.match(/BAC\s*=\s*([0-9\.\,]+)\s*\$/i)?.[1] ??
+    normalized.match(/BAC\s*=\s*\$?\s*([0-9\.\,]+)/i)?.[1] ??
+    null;
+  const bac = bacRaw ? parseMonetary(bacRaw) : null;
+
+  const rowRegex =
+    /(?:^|\n)\s*(\d{1,2})\s+(\d{1,2}\/\d{1,2}\/\d{4})\s+\$\s*([0-9\.\,]+)\s+([0-9\.\,]+)\s*\$/gm;
+  type BudgetRow = {
+    week: number;
+    fecha: string;
+    cptp: number;
+    cptr: number;
+  };
+  const rows: BudgetRow[] = [];
+  let match: RegExpExecArray | null = null;
+  while ((match = rowRegex.exec(normalized)) !== null) {
+    const week = Number(match[1]);
+    const fecha = parseDateDMY(match[2]);
+    const cptp = parseMonetary(match[3]);
+    const cptr = parseMonetary(match[4]);
+    if (!fecha || cptp == null || cptr == null || !Number.isFinite(week)) continue;
+    rows.push({ week, fecha, cptp, cptr });
+  }
+
+  const rowsWithEV = rows.filter((row) => row.week > 0 && row.cptr > 0);
+  const latest = rowsWithEV.length > 0 ? rowsWithEV[rowsWithEV.length - 1] : null;
+  const pctFromEv = bac != null && bac > 0 && latest ? (latest.cptr / bac) * 100 : null;
+
+  if (bac != null) {
+    result.presupuesto_total = bac;
+    result.moneda = "COP";
+  }
+  if (pctFromEv != null && Number.isFinite(pctFromEv)) {
+    result.porcentaje_completado = Math.max(0, Math.min(100, pctFromEv));
+    result.confidence = "alta";
+  } else if (bac != null) {
+    result.confidence = "media";
+  }
+  if (rows.length > 0) {
+    result.fecha_inicio_planeada = rows[0].fecha;
+    result.fecha_fin_planeada = rows[rows.length - 1].fecha;
+  }
+  if (latest) {
+    result.notas.push(
+      `Control presupuesto detectado: EV semana ${latest.week} = ${latest.cptr.toLocaleString("es-CO")} COP (${(pctFromEv ?? 0).toFixed(2)}%).`,
+    );
+  } else if (rows.length > 0) {
+    result.notas.push(
+      `Control presupuesto detectado con ${rows.length} filas semanales; sin EV acumulado válido.`,
+    );
+  } else {
+    result.notas.push(
+      "PDF detectado pero no se identificó la tabla de control de presupuesto.",
+    );
+  }
+
+  return {
+    preview: result,
+    parse_status: "metadata_only",
+    extracted_rows: [],
+    sheet_names: [],
+  };
+}
+
+function parsePipeTableRows(text: string): string[][] {
+  const rows: string[][] = [];
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.trim().startsWith("|")) continue;
+    if (/^\|\s*-+/.test(line)) continue;
+    const cells = line
+      .split("|")
+      .slice(1, -1)
+      .map((cell) => cell.trim());
+    if (cells.length === 0) continue;
+    rows.push(cells);
+  }
+  return rows;
+}
+
+function matrixRowsToObjects(headers: string[], rows: string[][]): Record<string, string>[] {
+  return rows
+    .filter((row) => row.some((cell) => cell.trim() !== ""))
+    .map((row) => {
+      const record: Record<string, string> = {};
+      headers.forEach((header, index) => {
+        record[header.trim().toLowerCase()] = row[index]?.trim() ?? "";
+      });
+      return record;
+    });
+}
+
+function parseApuMarkdown(text: string, filename: string): ParsedDocumentAnalysis {
+  const result = emptyResult(filename, "apu_markdown");
+  const rows = parsePipeTableRows(text);
+
+  if (rows.length === 0) {
+    result.notas.push("No detectamos tablas APU en este archivo.");
+    return {
+      preview: result,
+      parse_status: "metadata_only",
+      extracted_rows: [],
+      sheet_names: [],
+    };
+  }
+
+  const phases: ParsedPhase[] = [];
+  let valorTotal: number | null = null;
+  let nombreChapterCero: string | null = null;
+  let subtotalCostoDirecto: number | null = null;
+
+  rows.forEach((row) => {
+    if (row.length < 2) return;
+    const item = (row[0] ?? "").trim();
+    const desc = (row[1] ?? "").trim();
+    const parcial = row.length >= 6 ? parseMonetary(row[5] ?? "") : null;
+
+    if (/^VALOR\s+TOTAL/i.test(item) || /^VALOR\s+TOTAL/i.test(desc)) {
+      valorTotal = parcial ?? parseMonetary(row[row.length - 1] ?? "");
+      return;
+    }
+    if (/^SUBTOTAL\s+COSTO\s+DIRECTO/i.test(item)) {
+      subtotalCostoDirecto = parcial ?? parseMonetary(row[row.length - 1] ?? "");
+      return;
+    }
+    if (
+      /^ADMINISTRACI|^IMPREVISTOS|^UTILIDAD|^IVA/i.test(item) ||
+      /^ADMINISTRACI|^IMPREVISTOS|^UTILIDAD|^IVA/i.test(desc)
+    ) {
+      return;
+    }
+    if (!item && desc && !nombreChapterCero && /[A-ZÁÉÍÓÚÑ]{4,}/.test(desc)) {
+      nombreChapterCero = desc;
+      return;
+    }
+    if (/^\d+$/.test(item) && desc) {
+      phases.push({
+        nombre: cleanPhaseName(desc),
+        sort_order: phases.length + 1,
+        fecha_inicio: null,
+        fecha_fin: null,
+        porcentaje_completado: null,
+        costo: parcial,
+      });
+    }
+  });
+
+  if (phases.length === 0 && nombreChapterCero == null) {
+    result.notas.push("No detectamos capítulos APU.");
+    return {
+      preview: result,
+      parse_status: "metadata_only",
+      extracted_rows: [],
+      sheet_names: [],
+    };
+  }
+
+  result.confidence = phases.length > 0 ? "alta" : "media";
+  result.nombre = nombreChapterCero ?? decodeName(filename);
+  result.presupuesto_total = valorTotal ?? subtotalCostoDirecto ?? null;
+  result.moneda = "COP";
+  result.fases = phases;
+
+  const location = detectLocation(result.nombre);
+  if (location) result.ubicacion = location;
+
+  const budgetNote =
+    valorTotal != null
+      ? `, total ${Number(valorTotal).toLocaleString("es-CO")} COP`
+      : subtotalCostoDirecto != null
+        ? `, costo directo ${Number(subtotalCostoDirecto).toLocaleString("es-CO")} COP`
+        : "";
+  result.notas.push(
+    `APU detectada: ${phases.length} capítulo(s)${budgetNote}.`,
+  );
+
+  const extractedRows: DraftExtractedSupplyRow[] = [];
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const headerMap = detectSupplyHeaderMap(rows[rowIndex] ?? []);
+    if (!headerMap) continue;
+    const rawHeader = rows[rowIndex];
+    const bodyRows: string[][] = [];
+    for (let bodyIndex = rowIndex + 1; bodyIndex < rows.length; bodyIndex += 1) {
+      const candidateHeader = detectSupplyHeaderMap(rows[bodyIndex] ?? []);
+      if (candidateHeader) break;
+      bodyRows.push(rows[bodyIndex]);
+    }
+    const records = matrixRowsToObjects(rawHeader, bodyRows);
+    extractedRows.push(
+      ...extractSupplyRowsFromTabularRecords(records, filename, "apu_markdown", headerMap, {
+        parser: "apu_markdown_table",
+        rowOffset: rowIndex + 1,
+      }),
+    );
+  }
+
+  if (extractedRows.length > 0) {
+    result.notas.push(
+      `APU con ${extractedRows.length} fila${extractedRows.length === 1 ? "" : "s"} de insumos detectadas.`,
+    );
+  }
+
+  return {
+    preview: result,
+    parse_status: extractedRows.length > 0 ? "parsed_supply_rows" : "metadata_only",
+    extracted_rows: extractedRows,
+    sheet_names: [],
+  };
+}
+
+function parseGenericMarkdown(text: string, filename: string): ParsedDocumentAnalysis {
+  if (
+    /\|\s*ITEM\s*\|/i.test(text) ||
+    /VALOR\s+TOTAL\s+DE\s+LA\s+PROPUESTA/i.test(text)
+  ) {
+    return parseApuMarkdown(text, filename);
+  }
+
+  const result = emptyResult(filename, "markdown");
+  const titleMatch = text.match(/^#\s+(.+)$/m);
+  if (titleMatch) {
+    result.nombre = titleMatch[1].trim().slice(0, 200);
+    result.confidence = "media";
+  }
+  result.notas.push(
+    "Documento Markdown sin tabla APU detectada. Se conserva solo como metadata.",
+  );
+
+  return {
+    preview: result,
+    parse_status: "metadata_only",
+    extracted_rows: [],
+    sheet_names: [],
+  };
+}
+
+function parseFallback(
+  filename: string,
+  source: ContractSource,
+  textHint: string,
+  parseStatus: InputParseStatus,
+): ParsedDocumentAnalysis {
+  const result = emptyResult(filename, source);
+  result.notas.push(textHint);
+  return {
+    preview: result,
+    parse_status: parseStatus,
+    extracted_rows: [],
+    sheet_names: [],
+  };
+}
+
+function readUint16LE(bytes: Uint8Array, offset: number): number {
+  return bytes[offset] | (bytes[offset + 1] << 8);
+}
+
+function readUint32LE(bytes: Uint8Array, offset: number): number {
+  return (
+    bytes[offset] |
+    (bytes[offset + 1] << 8) |
+    (bytes[offset + 2] << 16) |
+    (bytes[offset + 3] << 24)
+  ) >>> 0;
+}
+
+function findZipEocdOffset(bytes: Uint8Array): number {
+  for (let offset = bytes.length - 22; offset >= Math.max(0, bytes.length - 65557); offset -= 1) {
+    if (readUint32LE(bytes, offset) === 0x06054b50) {
+      return offset;
+    }
+  }
+  return -1;
+}
+
+async function inflateRaw(bytes: Uint8Array): Promise<Uint8Array> {
+  if (typeof DecompressionStream === "undefined") {
+    throw new Error("El runtime no soporta descompresión ZIP para XLSX.");
+  }
+  const safeBytes = bytes.slice();
+  const stream = new Blob([safeBytes.buffer])
+    .stream()
+    .pipeThrough(new DecompressionStream("deflate-raw"));
+  const buffer = await new Response(stream).arrayBuffer();
+  return new Uint8Array(buffer);
+}
+
+async function unzipEntries(bytes: Uint8Array): Promise<Map<string, Uint8Array>> {
+  const eocdOffset = findZipEocdOffset(bytes);
+  if (eocdOffset < 0) {
+    throw new Error("No se encontró el directorio ZIP del XLSX.");
+  }
+
+  const centralDirectorySize = readUint32LE(bytes, eocdOffset + 12);
+  const centralDirectoryOffset = readUint32LE(bytes, eocdOffset + 16);
+  const textDecoder = new TextDecoder();
+  const entries = new Map<string, Uint8Array>();
+
+  let pointer = centralDirectoryOffset;
+  while (pointer < centralDirectoryOffset + centralDirectorySize) {
+    if (readUint32LE(bytes, pointer) !== 0x02014b50) {
+      throw new Error("Entrada ZIP inválida dentro del XLSX.");
+    }
+
+    const compressionMethod = readUint16LE(bytes, pointer + 10);
+    const compressedSize = readUint32LE(bytes, pointer + 20);
+    const fileNameLength = readUint16LE(bytes, pointer + 28);
+    const extraLength = readUint16LE(bytes, pointer + 30);
+    const commentLength = readUint16LE(bytes, pointer + 32);
+    const localHeaderOffset = readUint32LE(bytes, pointer + 42);
+    const fileName = textDecoder.decode(
+      bytes.slice(pointer + 46, pointer + 46 + fileNameLength),
+    );
+
+    pointer += 46 + fileNameLength + extraLength + commentLength;
+    if (fileName.endsWith("/")) continue;
+
+    if (readUint32LE(bytes, localHeaderOffset) !== 0x04034b50) {
+      throw new Error("Cabecera local ZIP inválida dentro del XLSX.");
+    }
+    const localNameLength = readUint16LE(bytes, localHeaderOffset + 26);
+    const localExtraLength = readUint16LE(bytes, localHeaderOffset + 28);
+    const dataStart = localHeaderOffset + 30 + localNameLength + localExtraLength;
+    const compressed = bytes.slice(dataStart, dataStart + compressedSize);
+
+    let content: Uint8Array;
+    if (compressionMethod === 0) {
+      content = compressed;
+    } else if (compressionMethod === 8) {
+      content = await inflateRaw(compressed);
+    } else {
+      throw new Error(`Compresión ZIP no soportada en XLSX: método ${compressionMethod}.`);
+    }
+    entries.set(fileName, content);
+  }
+
+  return entries;
+}
+
+function decodeZipEntry(entries: Map<string, Uint8Array>, path: string): string | null {
+  const data = entries.get(path);
+  if (!data) return null;
+  return new TextDecoder().decode(data);
+}
+
+function resolveZipPath(basePath: string, target: string): string {
+  if (target.startsWith("/")) {
+    return target.replace(/^\/+/, "");
+  }
+  const segments = basePath.split("/");
+  segments.pop();
+  target.split("/").forEach((segment) => {
+    if (!segment || segment === ".") return;
+    if (segment === "..") {
+      segments.pop();
+      return;
+    }
+    segments.push(segment);
+  });
+  return segments.join("/");
+}
+
+function extractRichText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object") return "";
+  const node = value as Record<string, unknown>;
+  if (typeof node.t === "string") return node.t;
+  if (Array.isArray(node.t)) return node.t.map((item) => extractRichText(item)).join("");
+  if (node.r) return asArray(node.r).map((item) => extractRichText(item)).join("");
+  return "";
+}
+
+function parseSharedStrings(xmlText: string | null): string[] {
+  if (!xmlText) return [];
+  const parsed = xmlParser.parse(xmlText) as {
+    sst?: { si?: Array<Record<string, unknown>> | Record<string, unknown> };
+  };
+  return asArray(parsed.sst?.si).map((item) => extractRichText(item).trim());
+}
+
+function columnIndexFromCellRef(ref: string): number {
+  const match = ref.match(/^([A-Z]+)\d+$/i);
+  if (!match) return -1;
+  let index = 0;
+  const letters = match[1].toUpperCase();
+  for (let i = 0; i < letters.length; i += 1) {
+    index = index * 26 + (letters.charCodeAt(i) - 64);
+  }
+  return index - 1;
+}
+
+function sheetCellText(
+  cell: Record<string, unknown>,
+  sharedStrings: string[],
+): string {
+  const type = String(cell.t ?? "");
+  if (type === "s") {
+    const index = Number(cell.v ?? -1);
+    return sharedStrings[index] ?? "";
+  }
+  if (type === "inlineStr") {
+    return extractRichText(cell.is).trim();
+  }
+  if (cell.is) {
+    return extractRichText(cell.is).trim();
+  }
+  if (cell.v != null) {
+    return String(cell.v).trim();
+  }
+  return "";
+}
+
+function parseWorksheetRows(xmlText: string, sharedStrings: string[]): string[][] {
+  const parsed = xmlParser.parse(xmlText) as {
+    worksheet?: {
+      sheetData?: {
+        row?: Array<Record<string, unknown>> | Record<string, unknown>;
+      };
+    };
+  };
+  const rows: string[][] = [];
+  for (const rowNode of asArray(parsed.worksheet?.sheetData?.row)) {
+    const cells = asArray((rowNode.c as Array<Record<string, unknown>> | Record<string, unknown>) ?? []);
+    const row: string[] = [];
+    cells.forEach((cell, idx) => {
+      const ref = typeof cell.r === "string" ? cell.r : "";
+      const columnIndex = ref ? columnIndexFromCellRef(ref) : idx;
+      if (columnIndex < 0) return;
+      row[columnIndex] = sheetCellText(cell, sharedStrings);
+    });
+    while (row.length > 0 && !row[row.length - 1]) {
+      row.pop();
+    }
+    rows.push(row.map((value) => value ?? ""));
+  }
+  return rows;
+}
+
+function findWorksheetTableMatch(rows: string[][]): WorksheetTableMatch | null {
+  const limit = Math.min(rows.length, 25);
+  for (let index = 0; index < limit; index += 1) {
+    const sourceRow = rows[index] ?? [];
+    const headers = Array.from(
+      { length: sourceRow.length },
+      (_, headerIndex) => String(sourceRow[headerIndex] ?? "").trim(),
+    );
+    const headerMap = detectSupplyHeaderMap(headers);
+    if (!headerMap) continue;
+    return {
+      header_row_index: index,
+      headers,
+      header_map: headerMap,
+    };
+  }
+  return null;
+}
+
+function rowsToTabularObjects(
+  matrix: string[][],
+  headers: string[],
+  headerRowIndex: number,
+): Record<string, string>[] {
+  const objects: Record<string, string>[] = [];
+  for (let index = headerRowIndex + 1; index < matrix.length; index += 1) {
+    const row = matrix[index] ?? [];
+    if (row.every((cell) => !String(cell ?? "").trim())) continue;
+    const record: Record<string, string> = {};
+    headers.forEach((header, headerIndex) => {
+      record[header.trim().toLowerCase()] = String(row[headerIndex] ?? "").trim();
+    });
+    objects.push(record);
+  }
+  return objects;
+}
+
+async function parseXlsx(file: File): Promise<ParsedDocumentAnalysis> {
+  const filename = file.name || "contrato.xlsx";
+  const result = emptyResult(filename, "xlsx");
+  const zipEntries = await unzipEntries(new Uint8Array(await file.arrayBuffer()));
+  const workbookXml = decodeZipEntry(zipEntries, "xl/workbook.xml");
+  const relationshipsXml = decodeZipEntry(zipEntries, "xl/_rels/workbook.xml.rels");
+  if (!workbookXml || !relationshipsXml) {
+    result.notas.push("El XLSX no contiene workbook.xml válido.");
+    return {
+      preview: result,
+      parse_status: "parse_failed",
+      extracted_rows: [],
+      sheet_names: [],
+    };
+  }
+
+  const workbook = xmlParser.parse(workbookXml) as {
+    workbook?: {
+      sheets?: {
+        sheet?: Array<Record<string, unknown>> | Record<string, unknown>;
+      };
+    };
+  };
+  const relationships = xmlParser.parse(relationshipsXml) as {
+    Relationships?: {
+      Relationship?: Array<Record<string, unknown>> | Record<string, unknown>;
+    };
+  };
+  const relationshipById = new Map<string, string>();
+  asArray(relationships.Relationships?.Relationship).forEach((relation) => {
+    const id = String(relation.Id ?? "");
+    const target = String(relation.Target ?? "");
+    if (id && target) {
+      relationshipById.set(id, resolveZipPath("xl/workbook.xml", target));
+    }
+  });
+
+  const sharedStrings = parseSharedStrings(decodeZipEntry(zipEntries, "xl/sharedStrings.xml"));
+  const sheets = asArray(workbook.workbook?.sheets?.sheet).map((sheet) => ({
+    name: String(sheet.name ?? "Sheet"),
+    path: relationshipById.get(String(sheet.id ?? "")) ?? "",
+  }));
+
+  const matchedSheetNames: string[] = [];
+  const allExtractedRows: DraftExtractedSupplyRow[] = [];
+  let firstPreviewRows: Record<string, string>[] = [];
+
+  for (const sheet of sheets) {
+    if (!sheet.path) continue;
+    const sheetXml = decodeZipEntry(zipEntries, sheet.path);
+    if (!sheetXml) continue;
+    const matrix = parseWorksheetRows(sheetXml, sharedStrings);
+    const match = findWorksheetTableMatch(matrix);
+    if (!match) continue;
+
+    matchedSheetNames.push(sheet.name);
+    const records = rowsToTabularObjects(
+      matrix,
+      match.headers,
+      match.header_row_index,
+    );
+    if (firstPreviewRows.length === 0) {
+      firstPreviewRows = records;
+    }
+    allExtractedRows.push(
+      ...extractSupplyRowsFromTabularRecords(records, filename, "xlsx", match.header_map, {
+        parser: "xlsx_sheet_table",
+        sheetName: sheet.name,
+        rowOffset: match.header_row_index + 1,
+      }),
+    );
+  }
+
+  if (firstPreviewRows.length > 0) {
+    const preview = buildTabularPreview(firstPreviewRows, filename, "xlsx");
+    preview.notas.push(
+      `XLSX con ${matchedSheetNames.length} hoja${matchedSheetNames.length === 1 ? "" : "s"} compatible${matchedSheetNames.length === 1 ? "" : "s"}: ${matchedSheetNames.join(", ")}.`,
+    );
+    if (allExtractedRows.length > 0) {
+      preview.notas.push(
+        `XLSX con ${allExtractedRows.length} fila${allExtractedRows.length === 1 ? "" : "s"} de insumos detectadas.`,
+      );
+    }
+    return {
+      preview,
+      parse_status: allExtractedRows.length > 0 ? "parsed_supply_rows" : "metadata_only",
+      extracted_rows: allExtractedRows,
+      sheet_names: matchedSheetNames,
+    };
+  }
+
+  result.notas.push(
+    "XLSX detectado, pero ninguna hoja coincidió con encabezados esperados de insumos/APU.",
+  );
+  return {
+    preview: result,
+    parse_status: "metadata_only",
+    extracted_rows: [],
+    sheet_names: [],
+  };
+}
+
+function attachDocumentIdentity(
+  file: File,
+  analysis: ParsedDocumentAnalysis,
+): { document: ParsedInputDocument; extractedRows: ExtractedSupplyRow[] } {
+  const documentId = `doc_${stableHash(
+    `${file.name}|${file.type}|${file.size}|${analysis.preview.source}`,
+  )}`;
+  const extractedRows = analysis.extracted_rows.map((row) => {
+    const rowId = `row_${stableHash(
+      [
+        documentId,
+        row.source_ref.sheet_name ?? "",
+        row.source_ref.row_index ?? "",
+        row.raw_name,
+        row.raw_unit ?? "",
+        row.raw_quantity ?? "",
+        row.raw_total_price ?? "",
+      ].join("|"),
+    )}`;
+    return {
+      ...row,
+      id: rowId,
+      document_id: documentId,
+    };
+  });
+
+  return {
+    document: {
+      id: documentId,
+      filename: file.name,
+      source: analysis.preview.source,
+      confidence: analysis.preview.confidence,
+      parse_status: analysis.parse_status,
+      notes: analysis.preview.notas,
+      preview: analysis.preview,
+      content_type: file.type || "application/octet-stream",
+      byte_size: file.size,
+      sheet_names: analysis.sheet_names,
+      extracted_row_count: extractedRows.length,
+    },
+    extractedRows,
+  };
+}
+
+function buildNormalizedSupplies(
+  extractedRows: ExtractedSupplyRow[],
+): {
+  normalized_supplies: NormalizedSupplyCandidate[];
+  row_normalizations: RowNormalization[];
+} {
+  const grouped = new Map<string, NormalizedSupplyCandidate>();
+  const rowNormalizations: RowNormalization[] = [];
+
+  extractedRows.forEach((row) => {
+    const existing = grouped.get(row.normalization_key);
+    if (!existing) {
+      grouped.set(row.normalization_key, {
+        key: row.normalization_key,
+        display_name: row.raw_name,
+        normalized_name: row.normalized_name,
+        normalized_unit: row.normalized_unit,
+        normalized_category: row.normalized_category,
+        quantity_total: row.raw_quantity,
+        unit_price_reference: row.raw_unit_price,
+        total_price_reference: row.raw_total_price,
+        extracted_row_ids: [row.id],
+        source_document_ids: [row.document_id],
+        row_count: 1,
+        source_count: 1,
+      });
+    } else {
+      existing.row_count += 1;
+      existing.extracted_row_ids.push(row.id);
+      if (!existing.source_document_ids.includes(row.document_id)) {
+        existing.source_document_ids.push(row.document_id);
+        existing.source_count = existing.source_document_ids.length;
+      }
+      if (row.raw_quantity != null) {
+        existing.quantity_total =
+          existing.quantity_total == null
+            ? row.raw_quantity
+            : Number((existing.quantity_total + row.raw_quantity).toFixed(6));
+      }
+      if (existing.unit_price_reference == null && row.raw_unit_price != null) {
+        existing.unit_price_reference = row.raw_unit_price;
+      }
+      if (row.raw_total_price != null) {
+        existing.total_price_reference =
+          existing.total_price_reference == null
+            ? row.raw_total_price
+            : Number((existing.total_price_reference + row.raw_total_price).toFixed(6));
+      }
+    }
+
+    rowNormalizations.push({
+      extracted_row_id: row.id,
+      normalized_key: row.normalization_key,
+      normalization_reason: "canonical_name_unit_category",
+    });
+  });
+
+  return {
+    normalized_supplies: Array.from(grouped.values()).sort((left, right) =>
+      left.display_name.localeCompare(right.display_name, "es"),
+    ),
+    row_normalizations: rowNormalizations,
+  };
+}
+
+export async function parseContractFile(file: File): Promise<ParsedContract> {
+  const analysis = await parseContractFileAnalysis(file);
+  return analysis.preview;
+}
+
+async function parseContractFileAnalysis(file: File): Promise<ParsedDocumentAnalysis> {
+  const filename = file.name || "contrato";
+  const ext = filename.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? "";
+  const mime = file.type ?? "";
+
+  if (ext === "xml" || mime === "text/xml" || mime === "application/xml") {
+    return parseMsProjectXml(await file.text(), filename);
+  }
+
+  if (ext === "csv" || mime === "text/csv" || mime === "application/csv") {
+    return parseCsv(await file.text(), filename);
+  }
+
+  if (
+    ext === "xlsx" ||
+    mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  ) {
+    try {
+      return await parseXlsx(file);
+    } catch (err) {
+      return parseFallback(
+        filename,
+        "xlsx",
+        `XLSX detectado, pero no pudimos procesarlo: ${(err as Error).message}`,
+        "parse_failed",
+      );
+    }
+  }
+
+  if (ext === "md" || ext === "markdown" || mime === "text/markdown") {
+    return parseGenericMarkdown(await file.text(), filename);
+  }
+
+  if (ext === "docx" || mime.includes("wordprocessingml")) {
+    return parseFallback(
+      filename,
+      "docx",
+      "Documento Word detectado. Se conserva metadata, pero v1 no extrae filas de insumos desde DOCX.",
+      "unsupported_for_supply_rows",
+    );
+  }
+
+  if (ext === "pdf" || mime === "application/pdf") {
+    try {
+      return parseControlBudgetPdf(await extractPdfText(file), filename);
+    } catch (err) {
+      return parseFallback(
+        filename,
+        "pdf",
+        `PDF detectado pero no pudimos extraer su contenido: ${(err as Error).message}`,
+        "parse_failed",
+      );
+    }
+  }
+
+  if (mime.startsWith("image/") || ["png", "jpg", "jpeg", "webp", "gif"].includes(ext)) {
+    return parseFallback(
+      filename,
+      "image",
+      "Imagen detectada. Se conserva metadata, pero v1 no extrae filas de insumos desde imágenes.",
+      "unsupported_for_supply_rows",
+    );
+  }
+
+  return parseFallback(
+    filename,
+    "filename",
+    `Formato .${ext || "desconocido"} no autodetectable para insumos. Completa los campos manualmente si aplica.`,
+    "unsupported_for_supply_rows",
+  );
+}
+
+export async function analyzeContractFiles(
+  files: File[],
+): Promise<ContractFileAnalysis> {
+  if (files.length === 0) {
+    throw new Error("No hay archivos para analizar.");
+  }
+
+  const parsedAnalyses = await Promise.all(files.map((file) => parseContractFileAnalysis(file)));
+  const documents: ParsedInputDocument[] = [];
+  const extractedRows: ExtractedSupplyRow[] = [];
+
+  files.forEach((file, index) => {
+    const withIdentity = attachDocumentIdentity(file, parsedAnalyses[index]);
+    documents.push(withIdentity.document);
+    extractedRows.push(...withIdentity.extractedRows);
+  });
+
+  const { normalized_supplies, row_normalizations } = buildNormalizedSupplies(extractedRows);
+  const merged_preview = buildMergedPreview(documents);
+
+  return {
+    merged_preview,
+    documents,
+    extracted_rows: extractedRows,
+    normalized_supplies,
+    row_normalizations,
+  };
+}
+
+export async function parseContractFiles(
+  files: File[],
+): Promise<MergedContract> {
+  const analysis = await analyzeContractFiles(files);
+  return analysis.merged_preview;
 }

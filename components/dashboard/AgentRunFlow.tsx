@@ -64,14 +64,30 @@ function fmtSignedPercent(value: number | null): string {
   return fmtPercent(0, { decimals: 2 });
 }
 
-export function AgentRunFlow({ projectId }: { projectId: string }) {
+export function AgentRunFlow({
+  projectId,
+  shouldAutoRun = true,
+  normalizedSupplyCount = 0,
+}: {
+  projectId: string;
+  shouldAutoRun?: boolean;
+  normalizedSupplyCount?: number;
+}) {
   const [state, setState] = useState<RunState>({
-    phase: "running",
+    phase: shouldAutoRun ? "running" : "done",
     snapshot: null,
     detail: null,
   });
 
   useEffect(() => {
+    if (!shouldAutoRun) {
+      setState({
+        phase: "done",
+        snapshot: null,
+        detail: null,
+      });
+      return;
+    }
     const controller = new AbortController();
     (async () => {
       try {
@@ -115,7 +131,7 @@ export function AgentRunFlow({ projectId }: { projectId: string }) {
     })();
 
     return () => controller.abort();
-  }, [projectId]);
+  }, [projectId, shouldAutoRun]);
 
   const snapshot = state.snapshot;
   const desviacion = getDesviacion(snapshot);
@@ -162,6 +178,13 @@ export function AgentRunFlow({ projectId }: { projectId: string }) {
           {fmtDate(snapshot?.last_run_finished_at ?? null)}
         </p>
       </div>
+
+      {!shouldAutoRun ? (
+        <div className="rounded-xl border border-status-warn/30 bg-status-warn/10 px-3 py-2 text-sm text-status-warn">
+          No ejecutamos el agente automáticamente porque este proyecto no tiene insumos normalizados persistidos.
+          Detectados: {normalizedSupplyCount}.
+        </div>
+      ) : null}
 
       {state.phase === "error" ? (
         <div className="rounded-xl border border-status-warn/30 bg-status-warn/10 px-3 py-2 text-xs text-status-warn">

@@ -5,6 +5,8 @@ import os
 import unittest
 from unittest.mock import patch
 
+import httpx
+
 from domain.supply_price.price_data import resolve_supply_to_series, _parse_fred_csv
 from domain.supply_price.price_forecast import forecast_series
 
@@ -220,6 +222,35 @@ class TestLiveFredFetch(unittest.TestCase):
         result = fetch_historical_prices("WPU0573", history_months=24, use_cache=False)
         self.assertTrue(result["success"])
         self.assertGreaterEqual(result["count"], 12)
+
+
+class TestFredFetchFallbacks(unittest.TestCase):
+    def test_falls_back_to_csv_when_api_fails(self):
+        from domain.supply_price.price_data import fetch_historical_prices
+
+        with patch.dict(os.environ, {"FRED_API_KEY": "test-key"}, clear=False), patch(
+            "domain.supply_price.price_data._fetch_fred_api",
+            side_effect=httpx.ReadTimeout("api timeout"),
+        ), patch(
+            "domain.supply_price.price_data._fetch_fred_csv",
+            return_value=_parse_fred_csv(SAMPLE_CSV, "WPU0573"),
+        ):
+            result = fetch_historical_prices("WPU0573", history_months=24, use_cache=False)
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["source"], "fred_csv")
+
+    def test_reports_combined_error_after_retries(self):
+        from domain.supply_price.price_data import fetch_historical_prices
+
+        with patch.dict(os.environ, {}, clear=False), patch(
+            "domain.supply_price.price_data._fetch_fred_csv",
+            side_effect=httpx.ReadTimeout("csv timeout"),
+        ):
+            result = fetch_historical_prices("WPU0573", history_months=24, use_cache=False)
+
+        self.assertFalse(result["success"])
+        self.assertIn("attempt 2/2 failed", result["error"])
 
 
 if __name__ == "__main__":

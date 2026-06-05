@@ -1,6 +1,11 @@
 # server.py
+import json
 import os
 import logging
+import uuid
+from collections.abc import Mapping
+from datetime import date, datetime
+from decimal import Decimal
 from fastmcp import FastMCP
 from domain.agent.agent import run_agent
 from demo.api_tools import fetch_compound, fetch_pypi_package
@@ -19,6 +24,34 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger("mcp-production-server")
+
+
+def _json_default(value):
+    if isinstance(value, Decimal):
+        return int(value) if value == value.to_integral_value() else float(value)
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Mapping):
+        return dict(value)
+    raise TypeError(f"Object of type {value.__class__.__name__} is not JSON serializable")
+
+
+def _json_safe_payload(value):
+    return json.loads(json.dumps(value, default=_json_default))
+
+
+def _safe_tool_result(tool_name: str, producer):
+    try:
+        return _json_safe_payload(producer())
+    except Exception as exc:
+        logger.exception("Tool '%s' failed before MCP serialization", tool_name)
+        return {
+            "success": False,
+            "error": f"{tool_name} failed",
+            "detail": str(exc),
+        }
 
 # Initialize FastMCP in SSE mode
 mcp = FastMCP(
@@ -102,18 +135,21 @@ def material_price_forecast(
         horizon_months,
         persist,
     )
-    return run_material_price_forecast(
-        user_id=user_id,
-        project_id=project_id,
-        run_id=run_id,
-        horizon_months=horizon_months,
-        material_queries=material_queries,
-        history_months=history_months,
-        access_token=access_token,
-        persist=persist,
-        overrun_threshold_pct=overrun_threshold_pct,
-        trigger=trigger,
-        dry_run=dry_run,
+    return _safe_tool_result(
+        "material_price_forecast",
+        lambda: run_material_price_forecast(
+            user_id=user_id,
+            project_id=project_id,
+            run_id=run_id,
+            horizon_months=horizon_months,
+            material_queries=material_queries,
+            history_months=history_months,
+            access_token=access_token,
+            persist=persist,
+            overrun_threshold_pct=overrun_threshold_pct,
+            trigger=trigger,
+            dry_run=dry_run,
+        ),
     )
 
 
@@ -148,13 +184,16 @@ def material_price_forecast_chart(
         run_id,
         supply_id,
     )
-    return generate_material_price_forecast_chart(
-        user_id,
-        run_id=run_id,
-        project_id=project_id,
-        supply_id=supply_id,
-        include_observations=include_observations,
-        access_token=access_token,
+    return _safe_tool_result(
+        "material_price_forecast_chart",
+        lambda: generate_material_price_forecast_chart(
+            user_id,
+            run_id=run_id,
+            project_id=project_id,
+            supply_id=supply_id,
+            include_observations=include_observations,
+            access_token=access_token,
+        ),
     )
 
 

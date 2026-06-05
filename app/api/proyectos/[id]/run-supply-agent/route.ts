@@ -29,6 +29,13 @@ interface RunSupplyCostResponse {
   detail?: string;
 }
 
+const RUN_SUPPLY_AGENT_TIMEOUT_MS = 300_000;
+
+function isTerminalSnapshot(snapshot: AgentOverrunSnapshot | null): boolean {
+  const status = String(snapshot?.last_run_status ?? "").toLowerCase();
+  return status === "completed" || status === "partial" || status === "failed";
+}
+
 function inferRunStatus(phase?: string): string | null {
   if (!phase) return null;
   const normalized = phase.toLowerCase();
@@ -92,6 +99,7 @@ export async function POST(
         method: "POST",
         bearerToken: getIncomingBearerFromRequest(req),
         extraHeaders: { "x-run-id": runId },
+        timeoutMs: RUN_SUPPLY_AGENT_TIMEOUT_MS,
         body: {
           project_id: projectId,
           mode: incoming.mode ?? "manual",
@@ -118,6 +126,15 @@ export async function POST(
     return response;
   } catch (error) {
     const snapshot = await getAgentOverrunSnapshot(projectId).catch(() => null);
+    if (isTerminalSnapshot(snapshot)) {
+      const response = NextResponse.json({
+        ok: true,
+        recovered_from_timeout: true,
+        snapshot,
+      });
+      response.headers.set("x-run-id", runId);
+      return response;
+    }
     const response = NextResponse.json(
       {
         ok: false,

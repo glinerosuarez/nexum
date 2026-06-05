@@ -355,6 +355,96 @@ def get_project_budget_status(
     return _run("get_project_budget_status", _impl)
 
 
+def get_project_supply_selection_inputs(
+    user_id: str,
+    project_id: str,
+    access_token: str | None = None,
+) -> dict[str, Any]:
+    def _impl():
+        pid, err = _require_project_id(user_id, project_id, access_token)
+        if err:
+            return err
+
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    select id, project_id, created_by_profile_id, status, merged_preview, created_at, updated_at
+                    from project_input_batches
+                    where project_id = %s
+                    order by created_at desc
+                    limit 1
+                    """,
+                    (pid,),
+                )
+                batch = cur.fetchone()
+                if not batch:
+                    conn.commit()
+                    return _ok(project_id=pid, batch=None, normalized_supplies=[], documents=[])
+
+                batch_id = batch["id"]
+                cur.execute(
+                    """
+                    select
+                      d.id,
+                      d.filename,
+                      d.source,
+                      d.parse_status,
+                      d.confidence,
+                      d.content_hash,
+                      d.extracted_row_count,
+                      d.sheet_names,
+                      d.created_at
+                    from project_input_documents d
+                    where d.input_batch_id = %s
+                    order by d.created_at asc
+                    """,
+                    (batch_id,),
+                )
+                documents = cur.fetchall()
+
+                cur.execute(
+                    """
+                    select
+                      s.id,
+                      s.normalization_key,
+                      s.display_name,
+                      s.normalized_name,
+                      s.normalized_unit,
+                      s.normalized_category,
+                      s.quantity_total,
+                      s.unit_price_reference,
+                      s.total_price_reference,
+                      s.row_count,
+                      s.source_count,
+                      s.source_document_ids,
+                      coalesce(
+                        array_agg(rn.extracted_row_id::text order by rn.created_at)
+                          filter (where rn.extracted_row_id is not null),
+                        '{}'
+                      ) as extracted_row_ids
+                    from project_input_normalized_supplies s
+                    left join project_input_row_normalizations rn
+                      on rn.normalized_supply_id = s.id
+                    where s.input_batch_id = %s
+                    group by s.id
+                    order by s.display_name asc
+                    """,
+                    (batch_id,),
+                )
+                normalized_supplies = cur.fetchall()
+            conn.commit()
+
+        return _ok(
+            project_id=pid,
+            batch=batch,
+            documents=documents,
+            normalized_supplies=normalized_supplies,
+        )
+
+    return _run("get_project_supply_selection_inputs", _impl)
+
+
 def _project_id_for_activity(activity_id: str) -> str:
     with get_conn() as conn:
         with conn.cursor() as cur:

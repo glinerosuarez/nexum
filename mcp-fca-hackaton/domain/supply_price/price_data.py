@@ -68,6 +68,9 @@ SERIES_CATALOG: list[dict[str, Any]] = [
 
 _CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _CACHE_TTL_SECONDS = 3600
+_FRED_API_TIMEOUT_SECONDS = 30.0
+_FRED_CSV_TIMEOUT_SECONDS = 40.0
+_FRED_FETCH_ATTEMPTS = 2
 
 
 def _normalize_text(value: str) -> str:
@@ -136,7 +139,7 @@ def _fetch_fred_api(
         "file_type": "json",
         "observation_start": start,
     }
-    with httpx.Client(timeout=20.0) as client:
+    with httpx.Client(timeout=_FRED_API_TIMEOUT_SECONDS) as client:
         response = client.get(FRED_API_BASE, params=params)
         response.raise_for_status()
         payload = response.json()
@@ -157,11 +160,28 @@ def _fetch_fred_api(
 
 def _fetch_fred_csv(series_id: str, history_months: int) -> list[dict[str, Any]]:
     params = {"id": series_id, "cos": "min", "mode": "fred"}
-    with httpx.Client(timeout=25.0, follow_redirects=True) as client:
+    with httpx.Client(timeout=_FRED_CSV_TIMEOUT_SECONDS, follow_redirects=True) as client:
         response = client.get(FRED_CSV_BASE, params=params)
         response.raise_for_status()
         observations = _parse_fred_csv(response.text, series_id)
     return _trim_observations(observations, history_months)
+
+
+def _attempt_fetch(
+    fetcher,
+    *,
+    series_id: str,
+    source_name: str,
+    attempts: int = _FRED_FETCH_ATTEMPTS,
+) -> tuple[list[dict[str, Any]], str | None]:
+    last_error: str | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return fetcher(), None
+        except httpx.HTTPError as exc:
+            last_error = f"{source_name} attempt {attempt}/{attempts} failed for {series_id}: {exc}"
+            logger.warning(last_error)
+    return [], last_error
 
 
 def fetch_from_source(
@@ -238,18 +258,35 @@ def fetch_historical_prices(
     observations: list[dict[str, Any]] = []
     source = "fred_csv"
 
-    try:
-        if api_key:
-            observations = _fetch_fred_api(series_id, api_key, history_months)
+    errors: list[str] = []
+    if api_key:
+        observations, api_error = _attempt_fetch(
+            lambda: _fetch_fred_api(series_id, api_key, history_months),
+            series_id=series_id,
+            source_name="fred_api",
+        )
+        if observations:
             source = "fred_api"
-        else:
-            observations = _fetch_fred_csv(series_id, history_months)
-    except httpx.HTTPError as exc:
-        logger.error("FRED fetch failed for %s: %s", series_id, exc)
+        elif api_error:
+            errors.append(api_error)
+
+    if not observations:
+        observations, csv_error = _attempt_fetch(
+            lambda: _fetch_fred_csv(series_id, history_months),
+            series_id=series_id,
+            source_name="fred_csv",
+        )
+        if observations:
+            source = "fred_csv"
+        elif csv_error:
+            errors.append(csv_error)
+
+    if not observations and errors:
+        logger.error("FRED fetch failed for %s after retries: %s", series_id, " | ".join(errors))
         return {
             "success": False,
             "series_id": series_id,
-            "error": f"Failed to fetch price series {series_id}: {exc}",
+            "error": f"Failed to fetch price series {series_id}: {' | '.join(errors)}",
         }
 
     if not observations:
