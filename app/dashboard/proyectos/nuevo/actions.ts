@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { nexumApiRequest } from "@/lib/nexum-api/client";
-import type { ParsedPhase } from "@/lib/contract-parser";
+import type { ParsedPhase, ShadowExtractionChunk } from "@/lib/contract-parser";
 
 export interface CreateActionState {
   ok: boolean;
@@ -37,6 +37,16 @@ function parsePhases(raw: string): ParsedPhase[] {
   }
 }
 
+function parseShadowExtractionChunks(raw: string): ShadowExtractionChunk[] {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed as ShadowExtractionChunk[];
+  } catch {
+    return [];
+  }
+}
+
 export async function createProjectAction(
   _prev: CreateActionState,
   formData: FormData,
@@ -57,6 +67,9 @@ export async function createProjectAction(
       costo: phase.costo ?? 0,
     }));
   const inputBatchId = (formData.get("input_batch_id") ?? "").toString().trim() || null;
+  const shadowExtractionChunks = parseShadowExtractionChunks(
+    (formData.get("shadow_extraction_chunks_json") ?? "[]").toString(),
+  );
 
   try {
     const response = await nexumApiRequest<{ ok: boolean; project_id: string }>(
@@ -77,6 +90,49 @@ export async function createProjectAction(
         },
       },
     );
+
+    if (inputBatchId && shadowExtractionChunks.length > 0) {
+      const sourceDocumentCount = new Set(
+        shadowExtractionChunks.map((chunk) => chunk.document_id),
+      ).size;
+      try {
+        await nexumApiRequest<{
+          agentic_run_id: string;
+          candidate_count?: number;
+        }>(`/project-input-batches/${inputBatchId}/agentic-shadow-runs/run`, {
+          method: "POST",
+          body: {
+            pipeline_variant: "agentic_shadow",
+            status: "running",
+            model_name: "gemini-2.5-flash",
+            retrieval_strategy: "document_local_context_v1",
+            prompt_version: "vertex_chunk_extractor_v1",
+            benchmark_instance_id: inputBatchId,
+            qualification_model_name: "shadow_qualification_heuristic_v1",
+            qualification_retrieval_strategy: "document_local_context_v1",
+            qualification_prompt_version: "heuristic_seed_v1",
+            qualification_summary: {
+              chunk_count: shadowExtractionChunks.length,
+              triggered_after_project_create: true,
+              project_id: response.project_id,
+            },
+            summary: {
+              source_document_count: sourceDocumentCount,
+              chunk_count: shadowExtractionChunks.length,
+              triggered_after_project_create: true,
+              project_id: response.project_id,
+            },
+            chunks: shadowExtractionChunks,
+          },
+        });
+      } catch (error) {
+        console.error("Agentic shadow run failed after project creation", {
+          projectId: response.project_id,
+          inputBatchId,
+          error,
+        });
+      }
+    }
 
     revalidatePath("/dashboard/proyectos");
     redirect(`/dashboard/proyectos/${response.project_id}/agente?created=1`);

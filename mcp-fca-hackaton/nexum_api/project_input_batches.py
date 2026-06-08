@@ -10,12 +10,39 @@ def _json(value: Any) -> str:
     return json.dumps(value if value is not None else {}, default=str)
 
 
+def _propagate_project_binding_to_agentic_shadow(
+    conn: Connection,
+    *,
+    input_batch_id: str,
+    project_id: str,
+) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            update project_input_agentic_runs
+            set project_id = %s, updated_at = now()
+            where input_batch_id = %s
+              and (project_id is null or project_id = %s)
+            """,
+            (project_id, input_batch_id, project_id),
+        )
+        cur.execute(
+            """
+            update project_input_agentic_candidates
+            set project_id = %s, updated_at = now()
+            where input_batch_id = %s
+              and (project_id is null or project_id = %s)
+            """,
+            (project_id, input_batch_id, project_id),
+        )
+
+
 def create_project_input_batch(
     conn: Connection,
     *,
     created_by_profile_id: str,
     payload: dict[str, Any],
-) -> str:
+) -> dict[str, Any]:
     documents = payload.get("documents") or []
     extracted_rows = payload.get("extracted_rows") or []
     normalized_supplies = payload.get("normalized_supplies") or []
@@ -207,7 +234,12 @@ def create_project_input_batch(
                 ),
             )
 
-    return batch_id
+    return {
+        "input_batch_id": batch_id,
+        "document_id_map": document_id_map,
+        "extracted_row_id_map": extracted_row_id_map,
+        "normalized_supply_id_map": normalized_supply_id_map,
+    }
 
 
 def bind_input_batch_to_project(
@@ -243,6 +275,11 @@ def bind_input_batch_to_project(
             """,
             (project_id, "linked_to_project", input_batch_id),
         )
+    _propagate_project_binding_to_agentic_shadow(
+        conn,
+        input_batch_id=input_batch_id,
+        project_id=project_id,
+    )
 
 
 def get_latest_project_input_batch(

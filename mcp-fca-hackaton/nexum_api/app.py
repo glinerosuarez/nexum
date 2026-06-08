@@ -18,8 +18,10 @@ from .db import DbConfigError, get_conn
 from .onboarding import create_project_with_bootstrap
 from .project_input_agentic import (
     create_agentic_shadow_run,
+    extract_agentic_shadow_run,
     get_project_supply_selection_comparison,
     qualify_agentic_shadow_run,
+    run_agentic_shadow_pipeline,
 )
 from .project_input_batches import (
     create_project_input_batch,
@@ -948,6 +950,34 @@ class ProjectInputAgenticCandidateRequest(BaseModel):
     extraction_notes: list[str] = Field(default_factory=list)
 
 
+class ProjectInputAgenticExtractionChunkRowRequest(BaseModel):
+    row_key: str
+    row_index: int
+    raw_text: str
+    raw_name: str
+    raw_unit: str | None = None
+    raw_category: str | None = None
+    raw_quantity: float | None = None
+    raw_unit_price: float | None = None
+    raw_total_price: float | None = None
+    raw_columns: dict[str, Any] = Field(default_factory=dict)
+    section_labels: list[str] = Field(default_factory=list)
+
+
+class ProjectInputAgenticExtractionChunkRequest(BaseModel):
+    chunk_id: str
+    document_id: str
+    source_type: str
+    source_ref: dict[str, Any] = Field(default_factory=dict)
+    table_signature: str | None = None
+    chunk_index: int = 0
+    headers: list[str] = Field(default_factory=list)
+    context_before: list[str] = Field(default_factory=list)
+    context_after: list[str] = Field(default_factory=list)
+    section_labels: list[str] = Field(default_factory=list)
+    rows: list[ProjectInputAgenticExtractionChunkRowRequest] = Field(default_factory=list)
+
+
 class ProjectInputAgenticRunCreateRequest(BaseModel):
     pipeline_variant: str = "agentic_shadow"
     status: str = "running"
@@ -956,6 +986,20 @@ class ProjectInputAgenticRunCreateRequest(BaseModel):
     prompt_version: str | None = None
     summary: dict[str, Any] = Field(default_factory=dict)
     candidates: list[ProjectInputAgenticCandidateRequest] = Field(default_factory=list)
+
+
+class ProjectInputAgenticExtractionRequest(BaseModel):
+    pipeline_variant: str = "agentic_shadow"
+    status: str = "running"
+    model_name: str | None = None
+    retrieval_strategy: str | None = None
+    prompt_version: str | None = None
+    summary: dict[str, Any] = Field(default_factory=dict)
+    chunks: list[ProjectInputAgenticExtractionChunkRequest] = Field(default_factory=list)
+    qualification_model_name: str | None = None
+    qualification_retrieval_strategy: str | None = None
+    qualification_prompt_version: str | None = None
+    qualification_summary: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProjectInputAgenticQualificationRequest(BaseModel):
@@ -1293,13 +1337,13 @@ def create_project_input_batch_endpoint(
     try:
         with get_conn() as conn:
             profile_id = _coerce_profile(conn, principal)
-            input_batch_id = create_project_input_batch(
+            result = create_project_input_batch(
                 conn,
                 created_by_profile_id=profile_id,
                 payload=payload.model_dump(),
             )
             conn.commit()
-            return {"ok": True, "input_batch_id": input_batch_id}
+            return {"ok": True, **result}
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except DbConfigError as exc:
@@ -1327,6 +1371,56 @@ def create_agentic_shadow_run_endpoint(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except DbConfigError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/project-input-batches/{input_batch_id}/agentic-shadow-runs/extract")
+def extract_agentic_shadow_run_endpoint(
+    input_batch_id: str,
+    body: ProjectInputAgenticExtractionRequest,
+    principal: Principal = Depends(resolve_principal),
+):
+    with get_conn() as conn:
+        profile_id = _coerce_profile(conn, principal)
+        try:
+            result = extract_agentic_shadow_run(
+                conn,
+                created_by_profile_id=profile_id,
+                input_batch_id=input_batch_id,
+                payload=body.model_dump(),
+            )
+            conn.commit()
+            return {"ok": True, **result}
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            conn.rollback()
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/project-input-batches/{input_batch_id}/agentic-shadow-runs/run")
+def run_agentic_shadow_pipeline_endpoint(
+    input_batch_id: str,
+    body: ProjectInputAgenticExtractionRequest,
+    principal: Principal = Depends(resolve_principal),
+):
+    with get_conn() as conn:
+        profile_id = _coerce_profile(conn, principal)
+        try:
+            result = run_agentic_shadow_pipeline(
+                conn,
+                created_by_profile_id=profile_id,
+                input_batch_id=input_batch_id,
+                payload=body.model_dump(),
+            )
+            conn.commit()
+            return {"ok": True, **result}
+        except ValueError as exc:
+            conn.rollback()
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            conn.rollback()
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/project-input-batches/{input_batch_id}/agentic-shadow-runs/{agentic_run_id}/qualify")

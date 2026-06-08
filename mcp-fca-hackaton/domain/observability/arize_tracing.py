@@ -34,11 +34,10 @@ _TRACE_API = None
 _STATUS = None
 _STATUS_CODE = None
 _TRACER_PROVIDER = None
-_PROJECT_ID: str | None = None
 _INIT_REASON = "not_initialized"
 
 
-logger = logging.getLogger("mcp-arize-tracing")
+logger = logging.getLogger("mcp-phoenix-tracing")
 
 
 def _normalize_attr_value(value: Any) -> Any:
@@ -52,107 +51,97 @@ def _normalize_attr_value(value: Any) -> Any:
     return str(value)
 
 
-def _resolve_or_create_project(
+def _default_pipeline_version() -> str:
+    for env_name in ("PIPELINE_VERSION", "K_REVISION", "GIT_SHA", "COMMIT_SHA"):
+        value = (os.getenv(env_name) or "").strip()
+        if value:
+            return value
+    return "dev"
+
+
+def _default_benchmark_dataset() -> str:
+    return (os.getenv("NEXUM_BENCHMARK_DATASET") or "contractual-projects-v1").strip()
+
+
+def comparison_attributes(
     *,
-    api_key: str,
-    space_id: str,
-    project_name: str,
-) -> str:
-    import httpx
+    pipeline_variant: str,
+    project_id: str | None = None,
+    input_batch_id: str | None = None,
+    benchmark_dataset: str | None = None,
+    benchmark_instance_id: str | None = None,
+    pipeline_version: str | None = None,
+) -> dict[str, Any]:
+    resolved_project_id = (project_id or "").strip() or None
+    resolved_input_batch_id = (input_batch_id or "").strip() or None
+    resolved_dataset = (benchmark_dataset or _default_benchmark_dataset()).strip()
+    resolved_instance = (
+        (benchmark_instance_id or "").strip()
+        or resolved_project_id
+        or resolved_input_batch_id
+    )
+    resolved_session_id = resolved_input_batch_id or resolved_project_id or resolved_instance
 
-    headers = {"Authorization": f"Bearer {api_key}"}
-    timeout = httpx.Timeout(15.0, connect=10.0)
+    attributes: dict[str, Any] = {
+        "pipeline.variant": pipeline_variant,
+        "pipeline.version": (pipeline_version or _default_pipeline_version()).strip(),
+        "benchmark.dataset": resolved_dataset,
+    }
+    if resolved_project_id:
+        attributes["project.id"] = resolved_project_id
+    if resolved_input_batch_id:
+        attributes["input_batch.id"] = resolved_input_batch_id
+    if resolved_instance:
+        attributes["benchmark.instance_id"] = resolved_instance
+    if resolved_session_id:
+        attributes["session.id"] = resolved_session_id
+    return attributes
 
-    with httpx.Client(timeout=timeout, headers=headers) as client:
-        list_resp = client.get(
-            "https://api.arize.com/v2/projects",
-            params={"space": space_id, "limit": 100},
-        )
-        list_resp.raise_for_status()
-        payload = list_resp.json()
-        projects = payload.get("projects") or payload.get("data") or []
-        for project in projects:
-            if str(project.get("name") or "").strip() == project_name:
-                project_id = str(project.get("id") or "").strip()
-                if project_id:
-                    return project_id
 
-        create_payloads = [
-            {"name": project_name, "space": space_id},
-            {"name": project_name, "space_id": space_id},
-        ]
-        last_error: Exception | None = None
-        for create_payload in create_payloads:
-            try:
-                create_resp = client.post(
-                    "https://api.arize.com/v2/projects",
-                    json=create_payload,
-                )
-                create_resp.raise_for_status()
-                created = create_resp.json()
-                project_id = str(created.get("id") or "").strip()
-                if project_id:
-                    return project_id
-            except Exception as exc:  # pragma: no cover - exercised live
-                last_error = exc
+def _read_env(primary: str, legacy: str) -> str:
+    return (os.getenv(primary) or os.getenv(legacy) or "").strip()
 
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError("Arize project resolution returned no project id")
+
+def _normalize_collector_endpoint(endpoint: str) -> str:
+    normalized = endpoint.rstrip("/")
+    if normalized.endswith("/v1/traces"):
+        return normalized
+    return f"{normalized}/v1/traces"
 
 
 def _ensure_initialized() -> None:
-    global _INITIALIZED, _ENABLED, _TRACER, _TRACE_API, _STATUS, _STATUS_CODE, _TRACER_PROVIDER, _PROJECT_ID, _INIT_REASON
+    global _INITIALIZED, _ENABLED, _TRACER, _TRACE_API, _STATUS, _STATUS_CODE, _TRACER_PROVIDER, _INIT_REASON
     if _INITIALIZED:
         return
     _INITIALIZED = True
 
-    api_key = (os.getenv("ARIZE_API_KEY") or "").strip()
-    space_id = (os.getenv("ARIZE_SPACE_ID") or "").strip()
-    project_name = (os.getenv("ARIZE_PROJECT_NAME") or "nexum-supply-intelligence").strip()
-    if not api_key or not space_id or not project_name:
+    api_key = _read_env("PHOENIX_API_KEY", "ARIZE_API_KEY")
+    endpoint = _read_env("PHOENIX_COLLECTOR_ENDPOINT", "ARIZE_COLLECTOR_ENDPOINT")
+    project_name = _read_env("PHOENIX_PROJECT_NAME", "ARIZE_PROJECT_NAME") or "nexum-supply-intelligence"
+    if not api_key or not endpoint or not project_name:
         _INIT_REASON = "missing_env"
         logger.warning(
-            "Arize tracing disabled: missing env (api_key=%s space_id=%s project_name=%s)",
+            "Phoenix tracing disabled: missing env (api_key=%s endpoint=%s project_name=%s)",
             bool(api_key),
-            bool(space_id),
+            bool(endpoint),
             bool(project_name),
         )
         return
 
     try:
-        from arize.otel import register
+        from phoenix.otel import register
         from opentelemetry import trace
         from opentelemetry.trace import Status, StatusCode
     except Exception as exc:
         _INIT_REASON = f"import_failed:{exc.__class__.__name__}"
-        logger.exception("Arize tracing import failed")
-        return
-
-    try:
-        _PROJECT_ID = _resolve_or_create_project(
-            api_key=api_key,
-            space_id=space_id,
-            project_name=project_name,
-        )
-        logger.info(
-            "Arize project resolved: name=%s id=%s",
-            project_name,
-            _PROJECT_ID,
-        )
-    except Exception as exc:
-        _INIT_REASON = f"project_resolution_failed:{exc.__class__.__name__}"
-        logger.exception("Arize project resolution failed")
+        logger.exception("Phoenix tracing import failed")
         return
 
     register_kwargs: dict[str, Any] = {
-        "space_id": space_id,
         "api_key": api_key,
         "project_name": project_name,
+        "endpoint": _normalize_collector_endpoint(endpoint),
     }
-    endpoint = (os.getenv("ARIZE_COLLECTOR_ENDPOINT") or "").strip()
-    if endpoint:
-        register_kwargs["endpoint"] = endpoint
 
     try:
         tracer_provider = register(**register_kwargs)
@@ -164,15 +153,15 @@ def _ensure_initialized() -> None:
         _ENABLED = tracer_provider is not None
         _INIT_REASON = "enabled" if _ENABLED else "register_returned_none"
         logger.info(
-            "Arize tracing initialization result: enabled=%s project=%s project_id=%s",
+            "Phoenix tracing initialization result: enabled=%s project=%s endpoint=%s",
             _ENABLED,
             project_name,
-            _PROJECT_ID,
+            register_kwargs["endpoint"],
         )
     except Exception as exc:
         _ENABLED = False
         _INIT_REASON = f"register_failed:{exc.__class__.__name__}"
-        logger.exception("Arize tracing registration failed")
+        logger.exception("Phoenix tracing registration failed")
 
 
 def tracing_enabled() -> bool:
@@ -185,8 +174,8 @@ def tracing_status() -> dict[str, Any]:
     return {
         "enabled": tracing_enabled(),
         "reason": _INIT_REASON,
-        "project_name": (os.getenv("ARIZE_PROJECT_NAME") or "nexum-supply-intelligence").strip(),
-        "project_id": _PROJECT_ID,
+        "project_name": _read_env("PHOENIX_PROJECT_NAME", "ARIZE_PROJECT_NAME") or "nexum-supply-intelligence",
+        "collector_endpoint": _normalize_collector_endpoint(_read_env("PHOENIX_COLLECTOR_ENDPOINT", "ARIZE_COLLECTOR_ENDPOINT")) if _read_env("PHOENIX_COLLECTOR_ENDPOINT", "ARIZE_COLLECTOR_ENDPOINT") else None,
     }
 
 
@@ -197,7 +186,7 @@ def force_flush(timeout_millis: int = 10000) -> bool:
     try:
         return bool(_TRACER_PROVIDER.force_flush(timeout_millis=timeout_millis))
     except Exception:
-        logger.exception("Arize trace flush failed")
+        logger.exception("Phoenix trace flush failed")
         return False
 
 

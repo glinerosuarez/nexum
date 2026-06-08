@@ -6,7 +6,7 @@ description = "Production FastMCP server consuming public API and database layou
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "arize-otel>=0.8.0",
+    "arize-phoenix-otel>=0.16.0",
     "fastmcp>=0.4.1",
     "fastapi>=0.115.0",
     "uvicorn>=0.30.0",

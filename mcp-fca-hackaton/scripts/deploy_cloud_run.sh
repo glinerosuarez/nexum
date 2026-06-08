@@ -17,9 +17,9 @@
 #   VERTEX_LOCATION=us-central1
 #   VERTEX_MODEL=gemini-1.5-pro
 #   VERTEX_PROJECT_ID=$GCP_PROJECT_ID
-#   ARIZE_PROJECT_NAME=nexum-supply-intelligence
-#   ARIZE_API_KEY_SECRET=nexum-arize-api-key
-#   ARIZE_SPACE_ID_SECRET=nexum-arize-space-id
+#   PHOENIX_PROJECT_NAME=nexum-supply-intelligence
+#   PHOENIX_API_KEY_SECRET=nexum-phoenix-api-key
+#   PHOENIX_COLLECTOR_ENDPOINT=https://app.phoenix.arize.com/s/linero
 
 set -euo pipefail
 
@@ -38,11 +38,11 @@ SERVICE_NAME="${SERVICE_NAME:-mcp-fca-hackaton}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 AGENT_BACKEND="${AGENT_BACKEND:-vertex}"
 VERTEX_LOCATION="${VERTEX_LOCATION:-us-central1}"
-VERTEX_MODEL="${VERTEX_MODEL:-gemini-1.5-pro}"
+VERTEX_MODEL="${VERTEX_MODEL:-gemini-2.5-flash}"
 VERTEX_PROJECT_ID="${VERTEX_PROJECT_ID:-$GCP_PROJECT_ID}"
-ARIZE_PROJECT_NAME="${ARIZE_PROJECT_NAME:-nexum-supply-intelligence}"
-ARIZE_API_KEY_SECRET="${ARIZE_API_KEY_SECRET:-nexum-arize-api-key}"
-ARIZE_SPACE_ID_SECRET="${ARIZE_SPACE_ID_SECRET:-nexum-arize-space-id}"
+PHOENIX_PROJECT_NAME="${PHOENIX_PROJECT_NAME:-nexum-supply-intelligence}"
+PHOENIX_API_KEY_SECRET="${PHOENIX_API_KEY_SECRET:-nexum-phoenix-api-key}"
+: "${PHOENIX_COLLECTOR_ENDPOINT:?PHOENIX_COLLECTOR_ENDPOINT is required}"
 
 IMAGE_URI="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${AR_REPO}/${SERVICE_NAME}:${IMAGE_TAG}"
 
@@ -87,9 +87,9 @@ gcloud run deploy "$SERVICE_NAME" \
   --set-env-vars "VERTEX_PROJECT_ID=${VERTEX_PROJECT_ID}" \
   --set-env-vars "VERTEX_LOCATION=${VERTEX_LOCATION}" \
   --set-env-vars "VERTEX_MODEL=${VERTEX_MODEL}" \
-  --set-env-vars "ARIZE_PROJECT_NAME=${ARIZE_PROJECT_NAME}" \
-  --update-secrets "ARIZE_API_KEY=${ARIZE_API_KEY_SECRET}:latest" \
-  --update-secrets "ARIZE_SPACE_ID=${ARIZE_SPACE_ID_SECRET}:latest" \
+  --set-env-vars "PHOENIX_PROJECT_NAME=${PHOENIX_PROJECT_NAME}" \
+  --set-env-vars "PHOENIX_COLLECTOR_ENDPOINT=${PHOENIX_COLLECTOR_ENDPOINT}" \
+  --update-secrets "PHOENIX_API_KEY=${PHOENIX_API_KEY_SECRET}:latest" \
   --set-env-vars "PYTHONUNBUFFERED=1"
 
 SERVICE_URL="$(gcloud run services describe "$SERVICE_NAME" --region "$GCP_REGION" --format='value(status.url)')"

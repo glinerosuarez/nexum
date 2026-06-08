@@ -110,6 +110,73 @@ export interface RowNormalization {
   normalization_reason: string;
 }
 
+export type AgenticCandidateOrigin =
+  | "matched_deterministic_candidate"
+  | "agentic_only_candidate"
+  | "agentic_split_from_deterministic_candidate";
+
+export type ExtractionConfidence = "high" | "medium" | "low";
+
+export interface ShadowCandidateEvidenceRef {
+  type: string;
+  value: string | number | null;
+}
+
+export interface AgenticShadowCandidate {
+  shadow_candidate_id: string;
+  input_batch_id: string;
+  document_id: string;
+  candidate_origin: AgenticCandidateOrigin;
+  deterministic_extracted_row_id: string | null;
+  deterministic_normalized_supply_id: string | null;
+  source_type: string;
+  source_ref: SupplySourceReference;
+  raw_text: string;
+  raw_name: string;
+  raw_unit: string | null;
+  raw_category: string | null;
+  raw_quantity: number | null;
+  raw_unit_price: number | null;
+  raw_total_price: number | null;
+  context_before: string[];
+  context_after: string[];
+  section_labels: string[];
+  evidence_refs: ShadowCandidateEvidenceRef[];
+  raw_columns: Record<string, string | number | null>;
+  span_offsets: Record<string, string | number | null>;
+  table_signature: string | null;
+  extraction_confidence: ExtractionConfidence;
+  extraction_notes: string[];
+}
+
+export interface ShadowExtractionChunkRow {
+  row_key: string;
+  row_index: number;
+  raw_text: string;
+  raw_name: string;
+  raw_unit: string | null;
+  raw_category: string | null;
+  raw_quantity: number | null;
+  raw_unit_price: number | null;
+  raw_total_price: number | null;
+  raw_columns: Record<string, string | number | null>;
+  section_labels: string[];
+}
+
+export interface ShadowExtractionChunk {
+  chunk_id: string;
+  document_id: string;
+  source_type: string;
+  source_ref: SupplySourceReference;
+  table_signature: string | null;
+  chunk_index: number;
+  headers: string[];
+  context_before: string[];
+  context_after: string[];
+  section_labels: string[];
+  rows: ShadowExtractionChunkRow[];
+}
+
 export interface ParsedInputDocument {
   id: string;
   filename: string;
@@ -130,6 +197,8 @@ export interface ContractFileAnalysis {
   extracted_rows: ExtractedSupplyRow[];
   normalized_supplies: NormalizedSupplyCandidate[];
   row_normalizations: RowNormalization[];
+  shadow_candidates: AgenticShadowCandidate[];
+  shadow_extraction_chunks: ShadowExtractionChunk[];
 }
 
 interface DraftExtractedSupplyRow {
@@ -149,10 +218,62 @@ interface DraftExtractedSupplyRow {
   raw_columns: Record<string, string | number | null>;
 }
 
+interface DraftAgenticShadowCandidate {
+  candidate_origin: AgenticCandidateOrigin;
+  deterministic_extracted_row_id: string | null;
+  deterministic_normalized_supply_id: string | null;
+  source_type: string;
+  source_ref: SupplySourceReference;
+  raw_text: string;
+  raw_name: string;
+  raw_unit: string | null;
+  raw_category: string | null;
+  raw_quantity: number | null;
+  raw_unit_price: number | null;
+  raw_total_price: number | null;
+  context_before: string[];
+  context_after: string[];
+  section_labels: string[];
+  evidence_refs: ShadowCandidateEvidenceRef[];
+  raw_columns: Record<string, string | number | null>;
+  span_offsets: Record<string, string | number | null>;
+  table_signature: string | null;
+  extraction_confidence: ExtractionConfidence;
+  extraction_notes: string[];
+}
+
+interface DraftShadowExtractionChunkRow {
+  row_key: string;
+  row_index: number;
+  raw_text: string;
+  raw_name: string;
+  raw_unit: string | null;
+  raw_category: string | null;
+  raw_quantity: number | null;
+  raw_unit_price: number | null;
+  raw_total_price: number | null;
+  raw_columns: Record<string, string | number | null>;
+  section_labels: string[];
+}
+
+interface DraftShadowExtractionChunk {
+  source_type: string;
+  source_ref: SupplySourceReference;
+  table_signature: string | null;
+  chunk_index: number;
+  headers: string[];
+  context_before: string[];
+  context_after: string[];
+  section_labels: string[];
+  rows: DraftShadowExtractionChunkRow[];
+}
+
 interface ParsedDocumentAnalysis {
   preview: ParsedContract;
   parse_status: InputParseStatus;
   extracted_rows: DraftExtractedSupplyRow[];
+  shadow_candidates: DraftAgenticShadowCandidate[];
+  shadow_extraction_chunks: DraftShadowExtractionChunk[];
   sheet_names: string[];
 }
 
@@ -294,6 +415,19 @@ const HEADER_ALIASES: Record<
   category: ["categoria", "categoría", "tipo", "clase"],
 };
 
+const HEADING_HINTS = new Set([
+  "acabados",
+  "arquitectonicos",
+  "arquitectonicos y acabados",
+  "capitulo",
+  "elementos arquitectonicos",
+  "equipos",
+  "habitaciones y pasillos",
+  "instalaciones electricas",
+  "instalaciones hidraulicas",
+  "preliminares",
+]);
+
 function asArray<T>(value: T | T[] | null | undefined): T[] {
   if (Array.isArray(value)) return value;
   return value == null ? [] : [value];
@@ -390,6 +524,51 @@ function normalizeText(value: string): string {
 
 function normalizeHeader(value: string): string {
   return normalizeText(value).replace(/\s+/g, " ");
+}
+
+function tokenizeWords(value: string): string[] {
+  return normalizeText(value)
+    .split(" ")
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function isIgnoredBudgetLine(rawName: string): boolean {
+  return /^subtotal|^valor total|^administraci|^imprevistos|^utilidad|^iva/i.test(rawName);
+}
+
+function looksHeadingLikeCandidate(
+  rawName: string,
+  rawUnit: string | null,
+  rawQuantity: number | null,
+  rawUnitPrice: number | null,
+  rawTotalPrice: number | null,
+): boolean {
+  const words = tokenizeWords(rawName);
+  if (words.length === 0) return false;
+  const hasNumericSignal =
+    rawQuantity != null || rawUnitPrice != null || rawTotalPrice != null || Boolean(rawUnit);
+  const letters = Array.from(rawName).filter((char) => /[A-Za-zÁÉÍÓÚÑáéíóúñ]/.test(char));
+  const uppercaseRatio =
+    letters.length === 0
+      ? 0
+      : letters.filter((char) => char === char.toUpperCase()).length / letters.length;
+  const normalized = normalizeText(rawName);
+  if (HEADING_HINTS.has(normalized)) return true;
+  if (!hasNumericSignal && uppercaseRatio >= 0.75 && words.length <= 8) return true;
+  if (!hasNumericSignal && words.length <= 5 && words.some((word) => HEADING_HINTS.has(word))) {
+    return true;
+  }
+  return false;
+}
+
+function hasTabularSupplySignals(
+  rawUnit: string | null,
+  rawQuantity: number | null,
+  rawUnitPrice: number | null,
+  rawTotalPrice: number | null,
+): boolean {
+  return rawUnit != null || rawQuantity != null || rawUnitPrice != null || rawTotalPrice != null;
 }
 
 function normalizeUnit(value: string | null | undefined): string | null {
@@ -800,6 +979,273 @@ function extractSupplyRowsFromTabularRecords(
   return extracted;
 }
 
+function extractShadowCandidatesFromTabularRecords(
+  rows: Record<string, string>[],
+  filename: string,
+  source: ContractSource,
+  headerMap: TabularHeaderMap,
+  options: { sheetName?: string; rowOffset?: number; parser: string },
+): DraftAgenticShadowCandidate[] {
+  const nameSeries = rows.map((row) => row[headerMap.name]?.trim() ?? "");
+  const sectionLabelsByIndex = buildSectionLabelsByIndex(rows, headerMap);
+
+  return rows.flatMap((row, idx) => {
+    const rawName = row[headerMap.name]?.trim() ?? "";
+    if (!rawName || isIgnoredBudgetLine(rawName)) return [];
+
+    const rawUnit = headerMap.unit ? row[headerMap.unit]?.trim() || null : null;
+    const rawCategory = headerMap.category
+      ? row[headerMap.category]?.trim() || null
+      : null;
+    const rawQuantity = headerMap.quantity
+      ? parseMonetary(row[headerMap.quantity] ?? "")
+      : null;
+    const rawUnitPrice = headerMap.unitPrice
+      ? parseMonetary(row[headerMap.unitPrice] ?? "")
+      : null;
+    const rawTotalPrice = headerMap.totalPrice
+      ? parseMonetary(row[headerMap.totalPrice] ?? "")
+      : null;
+    const hasSignals = hasTabularSupplySignals(
+      rawUnit,
+      rawQuantity,
+      rawUnitPrice,
+      rawTotalPrice,
+    );
+    const looksHeading = looksHeadingLikeCandidate(
+      rawName,
+      rawUnit,
+      rawQuantity,
+      rawUnitPrice,
+      rawTotalPrice,
+    );
+
+    if (!hasSignals && !looksHeading) {
+      return [];
+    }
+
+    const contextBefore = nameSeries
+      .slice(Math.max(0, idx - 2), idx)
+      .filter((value) => value && !isIgnoredBudgetLine(value));
+    const contextAfter = nameSeries
+      .slice(idx + 1, Math.min(nameSeries.length, idx + 3))
+      .filter((value) => value && !isIgnoredBudgetLine(value));
+    const evidenceRefs: ShadowCandidateEvidenceRef[] = [
+      { type: "row_text", value: rawName },
+    ];
+    if (options.sheetName) {
+      evidenceRefs.push({ type: "sheet_name", value: options.sheetName });
+    }
+    sectionLabelsByIndex[idx]?.slice(0, 2).forEach((label) => {
+      evidenceRefs.push({ type: "neighbor_heading", value: label });
+    });
+
+    return [
+      {
+        candidate_origin: "agentic_only_candidate",
+        deterministic_extracted_row_id: null,
+        deterministic_normalized_supply_id: null,
+        source_type: source,
+        source_ref: {
+          filename,
+          source,
+          parser: options.parser,
+          row_index: (options.rowOffset ?? 0) + idx + 1,
+          sheet_name: options.sheetName ?? null,
+        },
+        raw_text: rawName,
+        raw_name: rawName,
+        raw_unit: rawUnit,
+        raw_category: rawCategory,
+        raw_quantity: rawQuantity,
+        raw_unit_price: rawUnitPrice,
+        raw_total_price:
+          rawTotalPrice ??
+          (rawQuantity != null && rawUnitPrice != null
+            ? Number((rawQuantity * rawUnitPrice).toFixed(6))
+            : null),
+        context_before: contextBefore,
+        context_after: contextAfter,
+        section_labels: sectionLabelsByIndex[idx] ?? [],
+        evidence_refs: evidenceRefs,
+        raw_columns: toRawColumns(row),
+        span_offsets: {},
+        table_signature: stableHash(
+          [
+            source,
+            filename,
+            options.sheetName ?? "",
+            options.parser,
+            headerMap.name,
+            headerMap.unit ?? "",
+            headerMap.quantity ?? "",
+            headerMap.unitPrice ?? "",
+            headerMap.totalPrice ?? "",
+          ].join("|"),
+        ),
+        extraction_confidence: hasSignals ? "medium" : "low",
+        extraction_notes: [
+          hasSignals
+            ? "Recovered from row-emitting document context."
+            : "Recovered as heading/scope candidate from local row context.",
+        ],
+      },
+    ];
+  });
+}
+
+function buildSectionLabelsByIndex(
+  rows: Record<string, string>[],
+  headerMap: TabularHeaderMap,
+): string[][] {
+  const sectionLabelsByIndex: string[][] = [];
+  let activeSectionLabels: string[] = [];
+
+  rows.forEach((row, idx) => {
+    const rawName = row[headerMap.name]?.trim() ?? "";
+    const rawUnit = headerMap.unit ? row[headerMap.unit]?.trim() || null : null;
+    const rawQuantity = headerMap.quantity
+      ? parseMonetary(row[headerMap.quantity] ?? "")
+      : null;
+    const rawUnitPrice = headerMap.unitPrice
+      ? parseMonetary(row[headerMap.unitPrice] ?? "")
+      : null;
+    const rawTotalPrice = headerMap.totalPrice
+      ? parseMonetary(row[headerMap.totalPrice] ?? "")
+      : null;
+    const looksHeading = looksHeadingLikeCandidate(
+      rawName,
+      rawUnit,
+      rawQuantity,
+      rawUnitPrice,
+      rawTotalPrice,
+    );
+    if (looksHeading) {
+      activeSectionLabels = [rawName];
+    }
+    sectionLabelsByIndex[idx] = [...activeSectionLabels];
+  });
+
+  return sectionLabelsByIndex;
+}
+
+function buildShadowExtractionChunksFromTabularRecords(
+  rows: Record<string, string>[],
+  filename: string,
+  source: ContractSource,
+  headerMap: TabularHeaderMap,
+  options: { sheetName?: string; rowOffset?: number; parser: string; headers: string[] },
+): DraftShadowExtractionChunk[] {
+  const nameSeries = rows.map((row) => row[headerMap.name]?.trim() ?? "");
+  const sectionLabelsByIndex = buildSectionLabelsByIndex(rows, headerMap);
+  const candidateRows: DraftShadowExtractionChunkRow[] = rows.flatMap((row, idx) => {
+    const rawName = row[headerMap.name]?.trim() ?? "";
+    if (!rawName || isIgnoredBudgetLine(rawName)) return [];
+
+    const rawUnit = headerMap.unit ? row[headerMap.unit]?.trim() || null : null;
+    const rawCategory = headerMap.category
+      ? row[headerMap.category]?.trim() || null
+      : null;
+    const rawQuantity = headerMap.quantity
+      ? parseMonetary(row[headerMap.quantity] ?? "")
+      : null;
+    const rawUnitPrice = headerMap.unitPrice
+      ? parseMonetary(row[headerMap.unitPrice] ?? "")
+      : null;
+    const rawTotalPrice = headerMap.totalPrice
+      ? parseMonetary(row[headerMap.totalPrice] ?? "")
+      : null;
+    const rowIndex = (options.rowOffset ?? 0) + idx + 1;
+    const rowKey = [
+      options.sheetName ?? "sheet",
+      rowIndex,
+      stableHash(
+        [rawName, rawUnit ?? "", rawQuantity ?? "", rawUnitPrice ?? "", rawTotalPrice ?? ""].join("|"),
+      ).slice(0, 12),
+    ].join(":");
+
+    return [
+      {
+        row_key: rowKey,
+        row_index: rowIndex,
+        raw_text: rawName,
+        raw_name: rawName,
+        raw_unit: rawUnit,
+        raw_category: rawCategory,
+        raw_quantity: rawQuantity,
+        raw_unit_price: rawUnitPrice,
+        raw_total_price:
+          rawTotalPrice ??
+          (rawQuantity != null && rawUnitPrice != null
+            ? Number((rawQuantity * rawUnitPrice).toFixed(6))
+            : null),
+        raw_columns: toRawColumns(row),
+        section_labels: sectionLabelsByIndex[idx] ?? [],
+      },
+    ];
+  });
+
+  const chunkSize = 12;
+  const chunks: DraftShadowExtractionChunk[] = [];
+  for (let chunkStart = 0; chunkStart < candidateRows.length; chunkStart += chunkSize) {
+    const rowsInChunk = candidateRows.slice(chunkStart, chunkStart + chunkSize);
+    if (rowsInChunk.length === 0) continue;
+    const firstCandidate = rowsInChunk[0];
+    const lastCandidate = rowsInChunk[rowsInChunk.length - 1];
+    const startIdx = nameSeries.findIndex((name, idx) =>
+      ((options.rowOffset ?? 0) + idx + 1) === firstCandidate.row_index && normalizeText(name) === normalizeText(firstCandidate.raw_name),
+    );
+    const endIdx = nameSeries.findIndex((name, idx) =>
+      ((options.rowOffset ?? 0) + idx + 1) === lastCandidate.row_index && normalizeText(name) === normalizeText(lastCandidate.raw_name),
+    );
+    const contextBefore =
+      startIdx >= 0
+        ? nameSeries
+            .slice(Math.max(0, startIdx - 2), startIdx)
+            .filter((value) => value && !isIgnoredBudgetLine(value))
+        : [];
+    const contextAfter =
+      endIdx >= 0
+        ? nameSeries
+            .slice(endIdx + 1, Math.min(nameSeries.length, endIdx + 3))
+            .filter((value) => value && !isIgnoredBudgetLine(value))
+        : [];
+    const sectionLabels = Array.from(
+      new Set(rowsInChunk.flatMap((row) => row.section_labels).filter(Boolean)),
+    ).slice(0, 6);
+
+    chunks.push({
+      source_type: source,
+      source_ref: {
+        filename,
+        source,
+        parser: options.parser,
+        row_index: firstCandidate.row_index,
+        sheet_name: options.sheetName ?? null,
+      },
+      table_signature: stableHash(
+        [
+          source,
+          filename,
+          options.sheetName ?? "",
+          options.parser,
+          ...options.headers.map((header) => normalizeHeader(header)),
+          rowsInChunk[0]?.row_index ?? "",
+          rowsInChunk[rowsInChunk.length - 1]?.row_index ?? "",
+        ].join("|"),
+      ),
+      chunk_index: chunks.length,
+      headers: options.headers,
+      context_before: contextBefore,
+      context_after: contextAfter,
+      section_labels: sectionLabels,
+      rows: rowsInChunk,
+    });
+  }
+
+  return chunks;
+}
+
 function buildMergedPreview(documents: ParsedInputDocument[]): MergedContract {
   const parsed = documents.map((document) => document.preview);
   const firstFilename = documents[0]?.filename ?? "contrato";
@@ -978,6 +1424,8 @@ function parseMsProjectXml(xmlText: string, filename: string): ParsedDocumentAna
       preview: result,
       parse_status: "parse_failed",
       extracted_rows: [],
+      shadow_candidates: [],
+      shadow_extraction_chunks: [],
       sheet_names: [],
     };
   }
@@ -989,6 +1437,8 @@ function parseMsProjectXml(xmlText: string, filename: string): ParsedDocumentAna
       preview: result,
       parse_status: "metadata_only",
       extracted_rows: [],
+      shadow_candidates: [],
+      shadow_extraction_chunks: [],
       sheet_names: [],
     };
   }
@@ -1085,6 +1535,8 @@ function parseMsProjectXml(xmlText: string, filename: string): ParsedDocumentAna
     preview: result,
     parse_status: "metadata_only",
     extracted_rows: [],
+    shadow_candidates: [],
+    shadow_extraction_chunks: [],
     sheet_names: [],
   };
 }
@@ -1107,6 +1559,8 @@ function parseCsv(text: string, filename: string): ParsedDocumentAnalysis {
       preview: result,
       parse_status: "metadata_only",
       extracted_rows: [],
+      shadow_candidates: [],
+      shadow_extraction_chunks: [],
       sheet_names: [],
     };
   }
@@ -1118,6 +1572,8 @@ function parseCsv(text: string, filename: string): ParsedDocumentAnalysis {
       preview: result,
       parse_status: "metadata_only",
       extracted_rows: [],
+      shadow_candidates: [],
+      shadow_extraction_chunks: [],
       sheet_names: [],
     };
   }
@@ -1126,6 +1582,27 @@ function parseCsv(text: string, filename: string): ParsedDocumentAnalysis {
     parser: "csv_supply_rows",
     rowOffset: 1,
   });
+  const shadowCandidates = extractShadowCandidatesFromTabularRecords(
+    rows,
+    filename,
+    "csv",
+    headerMap,
+    {
+      parser: "csv_shadow_candidates",
+      rowOffset: 1,
+    },
+  );
+  const shadowExtractionChunks = buildShadowExtractionChunksFromTabularRecords(
+    rows,
+    filename,
+    "csv",
+    headerMap,
+    {
+      parser: "csv_shadow_extraction_chunks",
+      rowOffset: 1,
+      headers: parsed.meta.fields ?? [],
+    },
+  );
   result.notas.push(
     `CSV con ${extractedRows.length} fila${extractedRows.length === 1 ? "" : "s"} de insumos detectadas.`,
   );
@@ -1134,6 +1611,8 @@ function parseCsv(text: string, filename: string): ParsedDocumentAnalysis {
     preview: result,
     parse_status: extractedRows.length > 0 ? "parsed_supply_rows" : "metadata_only",
     extracted_rows: extractedRows,
+    shadow_candidates: shadowCandidates,
+    shadow_extraction_chunks: shadowExtractionChunks,
     sheet_names: [],
   };
 }
@@ -1226,6 +1705,8 @@ function parseControlBudgetPdf(text: string, filename: string): ParsedDocumentAn
     preview: result,
     parse_status: "metadata_only",
     extracted_rows: [],
+    shadow_candidates: [],
+    shadow_extraction_chunks: [],
     sheet_names: [],
   };
 }
@@ -1268,6 +1749,8 @@ function parseApuMarkdown(text: string, filename: string): ParsedDocumentAnalysi
       preview: result,
       parse_status: "metadata_only",
       extracted_rows: [],
+      shadow_candidates: [],
+      shadow_extraction_chunks: [],
       sheet_names: [],
     };
   }
@@ -1319,6 +1802,8 @@ function parseApuMarkdown(text: string, filename: string): ParsedDocumentAnalysi
       preview: result,
       parse_status: "metadata_only",
       extracted_rows: [],
+      shadow_candidates: [],
+      shadow_extraction_chunks: [],
       sheet_names: [],
     };
   }
@@ -1343,6 +1828,8 @@ function parseApuMarkdown(text: string, filename: string): ParsedDocumentAnalysi
   );
 
   const extractedRows: DraftExtractedSupplyRow[] = [];
+  const shadowCandidates: DraftAgenticShadowCandidate[] = [];
+  const shadowExtractionChunks: DraftShadowExtractionChunk[] = [];
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
     const headerMap = detectSupplyHeaderMap(rows[rowIndex] ?? []);
     if (!headerMap) continue;
@@ -1360,6 +1847,19 @@ function parseApuMarkdown(text: string, filename: string): ParsedDocumentAnalysi
         rowOffset: rowIndex + 1,
       }),
     );
+    shadowCandidates.push(
+      ...extractShadowCandidatesFromTabularRecords(records, filename, "apu_markdown", headerMap, {
+        parser: "apu_markdown_shadow_candidates",
+        rowOffset: rowIndex + 1,
+      }),
+    );
+    shadowExtractionChunks.push(
+      ...buildShadowExtractionChunksFromTabularRecords(records, filename, "apu_markdown", headerMap, {
+        parser: "apu_markdown_shadow_extraction_chunks",
+        rowOffset: rowIndex + 1,
+        headers: rawHeader,
+      }),
+    );
   }
 
   if (extractedRows.length > 0) {
@@ -1372,6 +1872,8 @@ function parseApuMarkdown(text: string, filename: string): ParsedDocumentAnalysi
     preview: result,
     parse_status: extractedRows.length > 0 ? "parsed_supply_rows" : "metadata_only",
     extracted_rows: extractedRows,
+    shadow_candidates: shadowCandidates,
+    shadow_extraction_chunks: shadowExtractionChunks,
     sheet_names: [],
   };
 }
@@ -1398,6 +1900,8 @@ function parseGenericMarkdown(text: string, filename: string): ParsedDocumentAna
     preview: result,
     parse_status: "metadata_only",
     extracted_rows: [],
+    shadow_candidates: [],
+    shadow_extraction_chunks: [],
     sheet_names: [],
   };
 }
@@ -1414,6 +1918,8 @@ function parseFallback(
     preview: result,
     parse_status: parseStatus,
     extracted_rows: [],
+    shadow_candidates: [],
+    shadow_extraction_chunks: [],
     sheet_names: [],
   };
 }
@@ -1652,6 +2158,8 @@ async function parseXlsx(file: File): Promise<ParsedDocumentAnalysis> {
       preview: result,
       parse_status: "parse_failed",
       extracted_rows: [],
+      shadow_candidates: [],
+      shadow_extraction_chunks: [],
       sheet_names: [],
     };
   }
@@ -1685,6 +2193,8 @@ async function parseXlsx(file: File): Promise<ParsedDocumentAnalysis> {
 
   const matchedSheetNames: string[] = [];
   const allExtractedRows: DraftExtractedSupplyRow[] = [];
+  const allShadowCandidates: DraftAgenticShadowCandidate[] = [];
+  const allShadowExtractionChunks: DraftShadowExtractionChunk[] = [];
   let firstPreviewRows: Record<string, string>[] = [];
 
   for (const sheet of sheets) {
@@ -1711,6 +2221,21 @@ async function parseXlsx(file: File): Promise<ParsedDocumentAnalysis> {
         rowOffset: match.header_row_index + 1,
       }),
     );
+    allShadowCandidates.push(
+      ...extractShadowCandidatesFromTabularRecords(records, filename, "xlsx", match.header_map, {
+        parser: "xlsx_shadow_candidates",
+        sheetName: sheet.name,
+        rowOffset: match.header_row_index + 1,
+      }),
+    );
+    allShadowExtractionChunks.push(
+      ...buildShadowExtractionChunksFromTabularRecords(records, filename, "xlsx", match.header_map, {
+        parser: "xlsx_shadow_extraction_chunks",
+        sheetName: sheet.name,
+        rowOffset: match.header_row_index + 1,
+        headers: match.headers,
+      }),
+    );
   }
 
   if (firstPreviewRows.length > 0) {
@@ -1727,6 +2252,8 @@ async function parseXlsx(file: File): Promise<ParsedDocumentAnalysis> {
       preview,
       parse_status: allExtractedRows.length > 0 ? "parsed_supply_rows" : "metadata_only",
       extracted_rows: allExtractedRows,
+      shadow_candidates: allShadowCandidates,
+      shadow_extraction_chunks: allShadowExtractionChunks,
       sheet_names: matchedSheetNames,
     };
   }
@@ -1738,6 +2265,8 @@ async function parseXlsx(file: File): Promise<ParsedDocumentAnalysis> {
     preview: result,
     parse_status: "metadata_only",
     extracted_rows: [],
+    shadow_candidates: [],
+    shadow_extraction_chunks: [],
     sheet_names: [],
   };
 }
@@ -1745,7 +2274,12 @@ async function parseXlsx(file: File): Promise<ParsedDocumentAnalysis> {
 function attachDocumentIdentity(
   file: File,
   analysis: ParsedDocumentAnalysis,
-): { document: ParsedInputDocument; extractedRows: ExtractedSupplyRow[] } {
+): {
+  document: ParsedInputDocument;
+  extractedRows: ExtractedSupplyRow[];
+  shadowCandidates: AgenticShadowCandidate[];
+  shadowExtractionChunks: ShadowExtractionChunk[];
+} {
   const documentId = `doc_${stableHash(
     `${file.name}|${file.type}|${file.size}|${analysis.preview.source}`,
   )}`;
@@ -1767,6 +2301,82 @@ function attachDocumentIdentity(
       document_id: documentId,
     };
   });
+  const extractedRowBySignature = new Map<string, ExtractedSupplyRow>();
+  extractedRows.forEach((row) => {
+    extractedRowBySignature.set(
+      [
+        row.source_ref.sheet_name ?? "",
+        row.source_ref.row_index ?? "",
+        normalizeText(row.raw_name),
+      ].join("|"),
+      row,
+    );
+  });
+  const shadowCandidates = analysis.shadow_candidates.map((candidate) => {
+    const matchedExtractedRow =
+      extractedRowBySignature.get(
+        [
+          candidate.source_ref.sheet_name ?? "",
+          candidate.source_ref.row_index ?? "",
+          normalizeText(candidate.raw_name),
+        ].join("|"),
+      ) ?? null;
+    return {
+      shadow_candidate_id: crypto.randomUUID(),
+      input_batch_id: "",
+      document_id: documentId,
+      candidate_origin: matchedExtractedRow
+        ? "matched_deterministic_candidate"
+        : candidate.candidate_origin,
+      deterministic_extracted_row_id: matchedExtractedRow?.id ?? null,
+      deterministic_normalized_supply_id: null,
+      source_type: candidate.source_type,
+      source_ref: {
+        ...candidate.source_ref,
+        filename: file.name,
+      },
+      raw_text: candidate.raw_text,
+      raw_name: candidate.raw_name,
+      raw_unit: candidate.raw_unit,
+      raw_category: candidate.raw_category,
+      raw_quantity: candidate.raw_quantity,
+      raw_unit_price: candidate.raw_unit_price,
+      raw_total_price: candidate.raw_total_price,
+      context_before: candidate.context_before,
+      context_after: candidate.context_after,
+      section_labels: candidate.section_labels,
+      evidence_refs: candidate.evidence_refs,
+      raw_columns: candidate.raw_columns,
+      span_offsets: candidate.span_offsets,
+      table_signature: candidate.table_signature,
+      extraction_confidence: candidate.extraction_confidence,
+      extraction_notes: candidate.extraction_notes,
+    };
+  });
+  const shadowExtractionChunks = analysis.shadow_extraction_chunks.map((chunk) => ({
+    chunk_id: `chunk_${stableHash(
+      [
+        documentId,
+        chunk.source_ref.sheet_name ?? "",
+        chunk.source_ref.row_index ?? "",
+        chunk.chunk_index,
+        chunk.table_signature ?? "",
+      ].join("|"),
+    )}`,
+    document_id: documentId,
+    source_type: chunk.source_type,
+    source_ref: {
+      ...chunk.source_ref,
+      filename: file.name,
+    },
+    table_signature: chunk.table_signature,
+    chunk_index: chunk.chunk_index,
+    headers: chunk.headers,
+    context_before: chunk.context_before,
+    context_after: chunk.context_after,
+    section_labels: chunk.section_labels,
+    rows: chunk.rows,
+  }));
 
   return {
     document: {
@@ -1783,6 +2393,8 @@ function attachDocumentIdentity(
       extracted_row_count: extractedRows.length,
     },
     extractedRows,
+    shadowCandidates,
+    shadowExtractionChunks,
   };
 }
 
@@ -1938,14 +2550,28 @@ export async function analyzeContractFiles(
   const parsedAnalyses = await Promise.all(files.map((file) => parseContractFileAnalysis(file)));
   const documents: ParsedInputDocument[] = [];
   const extractedRows: ExtractedSupplyRow[] = [];
+  const shadowCandidates: AgenticShadowCandidate[] = [];
+  const shadowExtractionChunks: ShadowExtractionChunk[] = [];
 
   files.forEach((file, index) => {
     const withIdentity = attachDocumentIdentity(file, parsedAnalyses[index]);
     documents.push(withIdentity.document);
     extractedRows.push(...withIdentity.extractedRows);
+    shadowCandidates.push(...withIdentity.shadowCandidates);
+    shadowExtractionChunks.push(...withIdentity.shadowExtractionChunks);
   });
 
   const { normalized_supplies, row_normalizations } = buildNormalizedSupplies(extractedRows);
+  const extractedRowById = new Map(extractedRows.map((row) => [row.id, row]));
+  const shadowCandidatesWithNormalization = shadowCandidates.map((candidate) => {
+    const extractedRow = candidate.deterministic_extracted_row_id
+      ? extractedRowById.get(candidate.deterministic_extracted_row_id) ?? null
+      : null;
+    return {
+      ...candidate,
+      deterministic_normalized_supply_id: extractedRow?.normalization_key ?? null,
+    };
+  });
   const merged_preview = buildMergedPreview(documents);
 
   return {
@@ -1954,6 +2580,8 @@ export async function analyzeContractFiles(
     extracted_rows: extractedRows,
     normalized_supplies,
     row_normalizations,
+    shadow_candidates: shadowCandidatesWithNormalization,
+    shadow_extraction_chunks: shadowExtractionChunks,
   };
 }
 

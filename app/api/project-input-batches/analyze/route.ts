@@ -108,7 +108,13 @@ export async function POST(request: Request) {
 
     const upstreamPayload = (await upstream
       .json()
-      .catch(() => ({}))) as { detail?: string; input_batch_id?: string };
+      .catch(() => ({}))) as {
+      detail?: string;
+      input_batch_id?: string;
+      document_id_map?: Record<string, string>;
+      extracted_row_id_map?: Record<string, string>;
+      normalized_supply_id_map?: Record<string, string>;
+    };
 
     if (!upstream.ok || !upstreamPayload.input_batch_id) {
       return NextResponse.json(
@@ -121,9 +127,22 @@ export async function POST(request: Request) {
       );
     }
 
+    const documentIdMap = upstreamPayload.document_id_map ?? {};
+    const shadowExtractionChunks = analysis.shadow_extraction_chunks
+      .map((chunk) => {
+        const persistedDocumentId = documentIdMap[chunk.document_id];
+        if (!persistedDocumentId) return null;
+        return {
+          ...chunk,
+          document_id: persistedDocumentId,
+        };
+      })
+      .filter((chunk): chunk is NonNullable<typeof chunk> => chunk !== null);
+
     return NextResponse.json({
       preview: analysis.merged_preview,
       input_batch_id: upstreamPayload.input_batch_id,
+      shadow_extraction_chunks: shadowExtractionChunks,
     });
   } catch (error) {
     return NextResponse.json(

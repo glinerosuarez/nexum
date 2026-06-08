@@ -20,6 +20,7 @@ import {
 import {
   type MergedContract,
   type ParsedPhase,
+  type ShadowExtractionChunk,
 } from "@/lib/contract-parser";
 
 const createInitial: CreateActionState = { ok: false, message: null };
@@ -39,6 +40,9 @@ export function NewProjectWizard() {
   const [phases, setPhases] = useState<ParsedPhase[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [inputBatchId, setInputBatchId] = useState<string | null>(null);
+  const [shadowExtractionChunks, setShadowExtractionChunks] = useState<
+    ShadowExtractionChunk[]
+  >([]);
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -81,6 +85,7 @@ export function NewProjectWizard() {
         detail?: string;
         preview?: MergedContract;
         input_batch_id?: string;
+        shadow_extraction_chunks?: ShadowExtractionChunk[];
       };
       if (!response.ok || !payload.preview || !payload.input_batch_id) {
         throw new Error(payload.detail ?? "No pudimos analizar los archivos.");
@@ -89,6 +94,7 @@ export function NewProjectWizard() {
       setParsed(payload.preview);
       setPhases(payload.preview.fases ?? []);
       setInputBatchId(payload.input_batch_id);
+      setShadowExtractionChunks(payload.shadow_extraction_chunks ?? []);
     } catch (err) {
       setParseError(`No pudimos leer los archivos: ${(err as Error).message}`);
     } finally {
@@ -101,6 +107,7 @@ export function NewProjectWizard() {
     setPhases([]);
     setFiles([]);
     setInputBatchId(null);
+    setShadowExtractionChunks([]);
     setParseError(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
@@ -303,6 +310,11 @@ export function NewProjectWizard() {
       <PhasesEditor phases={phases} onChange={setPhases} />
       <input type="hidden" name="phases_json" value={JSON.stringify(phases)} />
       <input type="hidden" name="input_batch_id" value={inputBatchId ?? ""} />
+      <input
+        type="hidden"
+        name="shadow_extraction_chunks_json"
+        value={JSON.stringify(shadowExtractionChunks)}
+      />
 
       {createState.message && !createState.ok ? (
         <div

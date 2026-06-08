@@ -7,6 +7,7 @@ build
 .env
 .env.local
 .env.*.local
+.gemini/
 .vercel
 next-env.d.ts
 tsconfig.tsbuildinfo

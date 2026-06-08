@@ -91,6 +91,18 @@ Those examples also show the current limitation clearly: many `agentic_only_cand
 3. compare honestly against deterministic precision and recall.
 
 ## Immediate Next Steps
+The immediate implementation order after the first live shadow deployment is now tracked in:
+
+[block2-subplan-phoenix-iteration-comparison.md](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/docs/block2-subplan-phoenix-iteration-comparison.md)
+
+That handoff plan is the current ordered next-step list for:
+1. Phoenix joinability and discoverability,
+2. mapping coverage improvement,
+3. deterministic linkage at the shadow-supply layer,
+4. Phoenix comparison dashboards/evals.
+
+Historical implementation notes from the earlier shadow rollout remain below.
+
 The next work should tighten the shadow pipeline in this order:
 
 1. Fix `project_id` propagation on persisted shadow artifacts.

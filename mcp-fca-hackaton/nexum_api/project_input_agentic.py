@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import unicodedata
 import uuid
@@ -8,7 +9,20 @@ from collections import Counter
 from decimal import Decimal
 from typing import Any
 
+from pydantic import BaseModel, Field
 from psycopg import Connection
+
+from domain.observability.arize_tracing import (
+    comparison_attributes,
+    current_trace_id,
+    force_flush,
+    mark_span_error,
+    mark_span_ok,
+    set_span_attributes,
+    start_as_current_span,
+    tracing_enabled,
+    tracing_status,
+)
 
 from .project_input_batches import get_latest_project_input_batch
 
@@ -83,6 +97,25 @@ _BUNDLE_KEYWORDS = {
     "s/i",
     "suministro e instalacion",
 }
+
+_SERIES_KEYWORDS: dict[str, set[str]] = {
+    "steel": {"acero", "varilla", "rebar", "corrugado", "metalica", "metalico"},
+    "cement": {"cemento", "concreto", "mortero", "fibrocemento"},
+    "lumber": {"madera", "lamina", "tablero", "puerta"},
+}
+
+_CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
+_CONFIDENCE_BY_RANK = {value: key for key, value in _CONFIDENCE_RANK.items()}
+
+
+class _ShadowExtractionSelection(BaseModel):
+    row_key: str
+    extraction_confidence: str = "medium"
+    extraction_note: str = ""
+
+
+class _ShadowExtractionResult(BaseModel):
+    selected_rows: list[_ShadowExtractionSelection] = Field(default_factory=list)
 
 
 def _json(value: Any, default: Any) -> str:
@@ -231,6 +264,325 @@ def _summary_from_counter(counter: Counter[str]) -> dict[str, int]:
     return {key: int(value) for key, value in sorted(counter.items())}
 
 
+def _observability_payload(trace_id: str | None) -> dict[str, Any]:
+    return {
+        "phoenix_tracing_enabled": tracing_enabled(),
+        "phoenix_status": tracing_status(),
+        "trace_id": trace_id,
+    }
+
+
+def _summary_with_observability(summary: dict[str, Any] | None, trace_id: str | None) -> dict[str, Any]:
+    payload = dict(summary or {})
+    payload["observability"] = _observability_payload(trace_id)
+    return payload
+
+
+def _agentic_shadow_comparison_attrs(
+    *,
+    payload: dict[str, Any],
+    input_batch_id: str,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    return comparison_attributes(
+        pipeline_variant=str(payload.get("pipeline_variant") or "agentic_shadow"),
+        project_id=project_id,
+        input_batch_id=input_batch_id,
+        benchmark_dataset=str(payload.get("benchmark_dataset") or "").strip() or None,
+        benchmark_instance_id=(
+            str(payload.get("benchmark_instance_id") or "").strip()
+            or project_id
+            or input_batch_id
+        ),
+        pipeline_version=str(payload.get("pipeline_version") or "").strip() or None,
+    )
+
+
+def _vertex_project_id() -> str | None:
+    value = (os.getenv("VERTEX_PROJECT_ID") or "").strip()
+    return value or None
+
+
+def _vertex_location() -> str:
+    return (os.getenv("VERTEX_LOCATION") or "us-central1").strip()
+
+
+def _vertex_model() -> str:
+    return (os.getenv("VERTEX_MODEL") or "gemini-2.5-flash").strip()
+
+
+def _coerce_confidence(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"high", "medium", "low"}:
+        return text
+    return "medium"
+
+
+def _build_shadow_extraction_prompt(chunk: dict[str, Any]) -> str:
+    compact_rows = []
+    for row in chunk.get("rows") or []:
+        compact_rows.append(
+            {
+                "row_key": row.get("row_key"),
+                "row_index": row.get("row_index"),
+                "raw_name": row.get("raw_name"),
+                "raw_unit": row.get("raw_unit"),
+                "raw_category": row.get("raw_category"),
+                "raw_quantity": row.get("raw_quantity"),
+                "raw_unit_price": row.get("raw_unit_price"),
+                "raw_total_price": row.get("raw_total_price"),
+                "section_labels": row.get("section_labels") or [],
+            }
+        )
+    prompt_payload = {
+        "source_type": chunk.get("source_type"),
+        "source_ref": chunk.get("source_ref") or {},
+        "headers": chunk.get("headers") or [],
+        "context_before": chunk.get("context_before") or [],
+        "context_after": chunk.get("context_after") or [],
+        "section_labels": chunk.get("section_labels") or [],
+        "rows": compact_rows,
+    }
+    return (
+        "You are extracting construction supply-intelligence candidates from a raw document chunk.\n"
+        "Select rows that should be persisted for later qualification. Include likely direct supplies, "
+        "bundle or supply-install rows, headings/chapters that organize relevant material sections, and "
+        "scope/activity rows that appear supply-adjacent. Exclude blank rows, taxes, totals, subtotals, "
+        "administration, utility, and IVA lines.\n"
+        "Return only row_key values that should become candidates.\n\n"
+        f"Chunk payload:\n{json.dumps(prompt_payload, ensure_ascii=False)}"
+    )
+
+
+def _invoke_vertex_shadow_extractor(
+    chunk: dict[str, Any],
+    *,
+    model_name: str | None,
+) -> _ShadowExtractionResult:
+    from langchain_google_vertexai import ChatVertexAI
+
+    llm = ChatVertexAI(
+        model=model_name or _vertex_model(),
+        project=_vertex_project_id(),
+        location=_vertex_location(),
+        temperature=0,
+        max_retries=3,
+    )
+    structured = llm.with_structured_output(
+        _ShadowExtractionResult,
+        method="json_schema",
+    )
+    return structured.invoke(_build_shadow_extraction_prompt(chunk))
+
+
+def _collapse_whitespace(value: Any) -> str:
+    return " ".join(str(value or "").strip().split())
+
+
+def _normalize_unit(value: Any) -> str | None:
+    unit = _collapse_whitespace(value).lower()
+    return unit or None
+
+
+def _confidence_min(a: str, b: str) -> str:
+    return _CONFIDENCE_BY_RANK[min(_CONFIDENCE_RANK.get(a, 0), _CONFIDENCE_RANK.get(b, 0))]
+
+
+def _canonical_category(candidate: dict[str, Any]) -> str:
+    raw_category = _collapse_whitespace(candidate.get("raw_category"))
+    if raw_category:
+        return _normalize_text(raw_category)
+    section_labels = [str(item).strip() for item in (candidate.get("section_labels") or []) if str(item).strip()]
+    if section_labels:
+        return _normalize_text(section_labels[0])
+    return "material"
+
+
+def _deterministic_group_key(candidate: dict[str, Any]) -> str:
+    deterministic_normalized_supply_id = (
+        str(candidate.get("deterministic_normalized_supply_id") or "").strip() or None
+    )
+    if deterministic_normalized_supply_id:
+        return f"det:{deterministic_normalized_supply_id}"
+    canonical_name = _normalize_text(candidate.get("raw_name") or candidate.get("raw_text") or "")
+    canonical_unit = _normalize_unit(candidate.get("raw_unit")) or "sin_unidad"
+    canonical_category = _canonical_category(candidate)
+    return f"{canonical_name}|{canonical_unit}|{canonical_category}"
+
+
+def _infer_series_key(value: Any) -> str | None:
+    normalized = _normalize_text(value)
+    words = set(_word_tokens(normalized))
+    for series_key, keywords in _SERIES_KEYWORDS.items():
+        if words & keywords:
+            return series_key
+    return None
+
+
+def _build_shadow_supply_artifacts(
+    candidates_with_judgments: list[tuple[dict[str, Any], dict[str, Any]]],
+    *,
+    agentic_run_id: str,
+    input_batch_id: str,
+    project_id: str | None,
+) -> dict[str, Any]:
+    grouped: dict[str, dict[str, Any]] = {}
+
+    for candidate, judgment in candidates_with_judgments:
+        if not judgment.get("is_qualified"):
+            continue
+
+        group_key = _deterministic_group_key(candidate)
+        canonical_name = _normalize_text(candidate.get("raw_name") or candidate.get("raw_text") or "")
+        canonical_unit = _normalize_unit(candidate.get("raw_unit"))
+        canonical_category = _canonical_category(candidate)
+        display_name = _collapse_whitespace(candidate.get("raw_name") or candidate.get("raw_text") or canonical_name)
+        deterministic_normalized_supply_id = (
+            str(candidate.get("deterministic_normalized_supply_id") or "").strip() or None
+        )
+        supply = grouped.get(group_key)
+        if not supply:
+            supply = {
+                "id": str(uuid.uuid4()),
+                "agentic_run_id": agentic_run_id,
+                "input_batch_id": input_batch_id,
+                "project_id": project_id,
+                "pipeline_variant": "agentic_shadow",
+                "display_name": display_name,
+                "canonical_name": canonical_name,
+                "canonical_unit": canonical_unit,
+                "canonical_category": canonical_category,
+                "quantity_total": Decimal("0"),
+                "unit_price_reference": None,
+                "total_price_reference": Decimal("0"),
+                "source_document_ids": set(),
+                "source_extracted_row_ids": set(),
+                "candidate_ids": [],
+                "deterministic_normalized_supply_id": deterministic_normalized_supply_id,
+                "confidence": judgment.get("confidence") or "low",
+                "rationale_summary": judgment.get("rationale_summary"),
+                "retrieval_evidence": [],
+                "link_reasons": {},
+            }
+            grouped[group_key] = supply
+
+        supply["quantity_total"] += _to_decimal_or_none(candidate.get("raw_quantity")) or Decimal("0")
+        supply["total_price_reference"] += _to_decimal_or_none(candidate.get("raw_total_price")) or Decimal("0")
+        if supply["unit_price_reference"] is None:
+            supply["unit_price_reference"] = _to_decimal_or_none(candidate.get("raw_unit_price"))
+        supply["source_document_ids"].add(str(candidate.get("document_id")))
+        if candidate.get("deterministic_extracted_row_id"):
+            supply["source_extracted_row_ids"].add(str(candidate.get("deterministic_extracted_row_id")))
+        supply["candidate_ids"].append(str(candidate.get("id")))
+        supply["confidence"] = _confidence_min(str(supply["confidence"]), str(judgment.get("confidence") or "low"))
+        supply["retrieval_evidence"].extend(list(judgment.get("evidence_refs") or [])[:2])
+        supply["link_reasons"][str(candidate.get("id"))] = (
+            "matched deterministic normalized supply"
+            if deterministic_normalized_supply_id
+            else "grouped by canonical shadow supply key"
+        )
+
+    supplies: list[dict[str, Any]] = []
+    row_links: list[dict[str, Any]] = []
+    mappings: list[dict[str, Any]] = []
+    mapping_status_counter: Counter[str] = Counter()
+    monitorability_counter: Counter[str] = Counter()
+
+    for supply in grouped.values():
+        series_key = _infer_series_key(
+            " ".join(
+                [
+                    str(supply.get("canonical_name") or ""),
+                    str(supply.get("display_name") or ""),
+                    str(supply.get("canonical_category") or ""),
+                ]
+            )
+        )
+        has_material_signal = _has_material_signal(str(supply.get("canonical_name") or ""))
+        if series_key:
+            monitorability_status = "monitorable"
+            market_mapping_status = "mapped"
+            mapping_strategy = "keyword_fallback"
+            mapping_confidence = "medium"
+        else:
+            monitorability_status = "monitorable" if has_material_signal else "unresolved"
+            market_mapping_status = "unmapped"
+            mapping_strategy = "unmapped"
+            mapping_confidence = "low"
+
+        supply_payload = {
+            **{k: v for k, v in supply.items() if k not in {"candidate_ids", "link_reasons"}},
+            "monitorability_status": monitorability_status,
+            "market_mapping_status": market_mapping_status,
+            "source_document_ids": sorted(supply["source_document_ids"]),
+            "source_extracted_row_ids": sorted(supply["source_extracted_row_ids"]),
+            "retrieval_evidence": supply["retrieval_evidence"][:6],
+            "mapping_candidate": {
+                "series_key": series_key,
+                "mapping_strategy": mapping_strategy,
+            },
+        }
+        supplies.append(supply_payload)
+        mapping_status_counter[market_mapping_status] += 1
+        monitorability_counter[monitorability_status] += 1
+
+        mappings.append(
+            {
+                "id": str(uuid.uuid4()),
+                "agentic_run_id": agentic_run_id,
+                "input_batch_id": input_batch_id,
+                "project_id": project_id,
+                "agentic_supply_id": supply["id"],
+                "mapping_status": market_mapping_status,
+                "mapping_strategy": mapping_strategy,
+                "series_key": series_key,
+                "series_id": None,
+                "source_name": "shadow_keyword_mapping" if series_key else None,
+                "source_url": None,
+                "confidence": mapping_confidence,
+                "rationale_summary": (
+                    f"Shadow supply matched market family `{series_key}` by keyword fallback."
+                    if series_key
+                    else "Shadow supply remains unmapped after first-pass keyword monitorability check."
+                ),
+            }
+        )
+
+        for candidate_id in supply["candidate_ids"]:
+            row_links.append(
+                {
+                    "id": str(uuid.uuid4()),
+                    "agentic_run_id": agentic_run_id,
+                    "candidate_id": candidate_id,
+                    "extracted_row_id": next(
+                        (
+                            str(item[0].get("deterministic_extracted_row_id"))
+                            for item in candidates_with_judgments
+                            if str(item[0].get("id")) == candidate_id
+                            and item[0].get("deterministic_extracted_row_id")
+                        ),
+                        None,
+                    ),
+                    "agentic_supply_id": supply["id"],
+                    "link_reason": supply["link_reasons"].get(candidate_id) or "grouped by shadow supply key",
+                }
+            )
+
+    return {
+        "supplies": supplies,
+        "row_links": row_links,
+        "mappings": mappings,
+        "summary": {
+            "shadow_supply_count": len(supplies),
+            "mapped_shadow_supply_count": int(mapping_status_counter.get("mapped", 0)),
+            "unmapped_shadow_supply_count": int(mapping_status_counter.get("unmapped", 0)),
+            "rejected_shadow_supply_count": int(mapping_status_counter.get("rejected", 0)),
+            "monitorable_shadow_supply_count": int(monitorability_counter.get("monitorable", 0)),
+            "unresolved_shadow_supply_count": int(monitorability_counter.get("unresolved", 0)),
+        },
+    }
+
+
 def _get_owned_batch(
     conn: Connection,
     *,
@@ -253,6 +605,626 @@ def _get_owned_batch(
         if str(row.get("created_by_profile_id")) != created_by_profile_id:
             raise ValueError("input_batch_id no pertenece al usuario creador.")
         return row
+
+
+def _load_deterministic_row_matches(
+    conn: Connection,
+    *,
+    input_batch_id: str,
+) -> tuple[dict[str, str], dict[str, dict[str, str | None]]]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select
+              r.id,
+              r.document_id,
+              r.raw_name,
+              r.source_ref->>'sheet_name' as sheet_name,
+              r.source_ref->>'row_index' as row_index,
+              rn.normalized_supply_id
+            from project_input_extracted_rows r
+            left join project_input_row_normalizations rn
+              on rn.extracted_row_id = r.id
+            where r.input_batch_id = %s
+            """,
+            (input_batch_id,),
+        )
+        matches: dict[str, dict[str, str | None]] = {}
+        document_ids: dict[str, str] = {}
+        for row in cur.fetchall():
+            document_ids[str(row["document_id"])] = str(row["document_id"])
+            signature = "|".join(
+                [
+                    str(row.get("document_id") or ""),
+                    str(row.get("sheet_name") or ""),
+                    str(row.get("row_index") or ""),
+                    _normalize_text(row.get("raw_name") or ""),
+                ]
+            )
+            matches[signature] = {
+                "extracted_row_id": str(row["id"]),
+                "normalized_supply_id": str(row["normalized_supply_id"])
+                if row.get("normalized_supply_id")
+                else None,
+            }
+    return document_ids, matches
+
+
+def _extract_agentic_shadow_run_impl(
+    conn: Connection,
+    *,
+    created_by_profile_id: str,
+    input_batch_id: str,
+    payload: dict[str, Any],
+    trace_id: str | None,
+) -> dict[str, Any]:
+    batch = _get_owned_batch(
+        conn,
+        created_by_profile_id=created_by_profile_id,
+        input_batch_id=input_batch_id,
+    )
+    chunks = payload.get("chunks") or []
+    if not isinstance(chunks, list) or len(chunks) == 0:
+        raise ValueError("At least one extraction chunk is required.")
+
+    document_ids, deterministic_matches = _load_deterministic_row_matches(
+        conn,
+        input_batch_id=input_batch_id,
+    )
+
+    with start_as_current_span(
+        "load_documents",
+        kind="CHAIN",
+        attributes={
+            "shadow.input_batch_id": input_batch_id,
+            "shadow.chunk_count": len(chunks),
+            "shadow.document_count": len({str(chunk.get("document_id") or "").strip() for chunk in chunks}),
+            "shadow.deterministic_row_match_count": len(deterministic_matches),
+        },
+    ) as load_documents_span:
+        mark_span_ok(load_documents_span)
+
+    extracted_candidates: list[dict[str, Any]] = []
+    chunk_selection_counts: list[int] = []
+    candidate_origin_counter: Counter[str] = Counter()
+
+    with start_as_current_span(
+        "extract_shadow_candidates",
+        kind="CHAIN",
+        attributes={
+            "shadow.chunk_count": len(chunks),
+            "shadow.model_name": str(payload.get("model_name") or _vertex_model()),
+            "shadow.prompt_version": str(payload.get("prompt_version") or ""),
+        },
+    ) as extract_span:
+        for chunk in chunks:
+            document_id = str(chunk.get("document_id") or "").strip()
+            if document_id not in document_ids:
+                raise ValueError("Extraction chunk references unknown document_id for input batch.")
+
+            rows = chunk.get("rows") or []
+            row_by_key = {
+                str(row.get("row_key") or "").strip(): row
+                for row in rows
+                if str(row.get("row_key") or "").strip()
+            }
+            if not row_by_key:
+                chunk_selection_counts.append(0)
+                continue
+
+            result = _invoke_vertex_shadow_extractor(
+                chunk,
+                model_name=str(payload.get("model_name") or "").strip() or None,
+            )
+            chunk_selection_count = 0
+
+            for selection in result.selected_rows:
+                row = row_by_key.get(selection.row_key)
+                if not row:
+                    continue
+
+                chunk_selection_count += 1
+                source_ref = dict(chunk.get("source_ref") or {})
+                source_ref["row_index"] = row.get("row_index")
+                source_ref["sheet_name"] = source_ref.get("sheet_name")
+
+                signature = "|".join(
+                    [
+                        document_id,
+                        str(source_ref.get("sheet_name") or ""),
+                        str(row.get("row_index") or ""),
+                        _normalize_text(row.get("raw_name") or row.get("raw_text") or ""),
+                    ]
+                )
+                deterministic_match = deterministic_matches.get(signature)
+                candidate_origin = (
+                    "matched_deterministic_candidate" if deterministic_match else "agentic_only_candidate"
+                )
+                evidence_refs = list(
+                    [
+                        {"type": "row_text", "value": row.get("raw_text")},
+                        *(
+                            [{"type": "sheet_name", "value": source_ref.get("sheet_name")}]
+                            if source_ref.get("sheet_name")
+                            else []
+                        ),
+                    ]
+                )
+                for label in list(row.get("section_labels") or [])[:2]:
+                    evidence_refs.append({"type": "section_label", "value": label})
+
+                extracted_candidates.append(
+                    {
+                        "shadow_candidate_id": str(uuid.uuid4()),
+                        "input_batch_id": input_batch_id,
+                        "document_id": document_id,
+                        "candidate_origin": candidate_origin,
+                        "deterministic_extracted_row_id": (
+                            deterministic_match.get("extracted_row_id") if deterministic_match else None
+                        ),
+                        "deterministic_normalized_supply_id": (
+                            deterministic_match.get("normalized_supply_id") if deterministic_match else None
+                        ),
+                        "source_type": chunk.get("source_type"),
+                        "source_ref": source_ref,
+                        "raw_text": row.get("raw_text"),
+                        "raw_name": row.get("raw_name"),
+                        "raw_unit": row.get("raw_unit"),
+                        "raw_category": row.get("raw_category"),
+                        "raw_quantity": row.get("raw_quantity"),
+                        "raw_unit_price": row.get("raw_unit_price"),
+                        "raw_total_price": row.get("raw_total_price"),
+                        "context_before": chunk.get("context_before") or [],
+                        "context_after": chunk.get("context_after") or [],
+                        "section_labels": row.get("section_labels") or chunk.get("section_labels") or [],
+                        "evidence_refs": evidence_refs,
+                        "raw_columns": row.get("raw_columns") or {},
+                        "span_offsets": {},
+                        "table_signature": chunk.get("table_signature"),
+                        "extraction_confidence": _coerce_confidence(selection.extraction_confidence),
+                        "extraction_notes": [
+                            "LLM extracted from raw document chunk.",
+                            *([selection.extraction_note] if selection.extraction_note else []),
+                        ],
+                    }
+                )
+                candidate_origin_counter[candidate_origin] += 1
+
+            chunk_selection_counts.append(chunk_selection_count)
+
+        set_span_attributes(
+            extract_span,
+            {
+                "shadow.candidate_count": len(extracted_candidates),
+                "shadow.chunk_with_candidates_count": sum(1 for count in chunk_selection_counts if count > 0),
+                "shadow.chunk_avg_selected_rows": (
+                    round(sum(chunk_selection_counts) / len(chunk_selection_counts), 4)
+                    if chunk_selection_counts
+                    else 0.0
+                ),
+                "shadow.matched_deterministic_candidate_count": int(
+                    candidate_origin_counter.get("matched_deterministic_candidate", 0)
+                ),
+                "shadow.agentic_only_candidate_count": int(
+                    candidate_origin_counter.get("agentic_only_candidate", 0)
+                ),
+            },
+        )
+        mark_span_ok(extract_span)
+
+    result = create_agentic_shadow_run(
+        conn,
+        created_by_profile_id=created_by_profile_id,
+        input_batch_id=input_batch_id,
+        payload={
+            **payload,
+            "candidates": extracted_candidates,
+            "summary": {
+                **(payload.get("summary") or {}),
+                "chunk_count": len(chunks),
+                "candidate_count": len(extracted_candidates),
+            },
+        },
+    )
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            update project_input_agentic_runs
+            set
+              summary = %s::jsonb,
+              updated_at = now()
+            where id = %s
+            """,
+            (
+                _json(
+                    _summary_with_observability(
+                        {
+                            **(payload.get("summary") or {}),
+                            "chunk_count": len(chunks),
+                            "candidate_count": len(extracted_candidates),
+                            "candidate_origin_counts": result.get("candidate_origin_counts") or {},
+                        },
+                        trace_id,
+                    ),
+                    {},
+                ),
+                result["agentic_run_id"],
+            ),
+        )
+    result["observability"] = _observability_payload(trace_id)
+    result["_batch"] = batch
+    result["_candidate_origin_counter"] = dict(candidate_origin_counter)
+    result["_candidate_count"] = len(extracted_candidates)
+    result["_chunk_count"] = len(chunks)
+    return result
+
+
+def extract_agentic_shadow_run(
+    conn: Connection,
+    *,
+    created_by_profile_id: str,
+    input_batch_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    trace_id: str | None = None
+    final_result: dict[str, Any] | None = None
+
+    with start_as_current_span(
+        "agentic_shadow_run",
+        kind="CHAIN",
+        attributes={
+            "shadow.stage": "extract",
+            "shadow.input_batch_id": input_batch_id,
+            "shadow.model_name": str(payload.get("model_name") or _vertex_model()),
+            "shadow.retrieval_strategy": str(payload.get("retrieval_strategy") or ""),
+            "shadow.prompt_version": str(payload.get("prompt_version") or ""),
+            **_agentic_shadow_comparison_attrs(
+                payload=payload,
+                input_batch_id=input_batch_id,
+            ),
+        },
+    ) as root_span:
+        trace_id = current_trace_id(root_span)
+        try:
+            set_span_attributes(
+                root_span,
+                _agentic_shadow_comparison_attrs(
+                    payload=payload,
+                    input_batch_id=input_batch_id,
+                ),
+            )
+            result = _extract_agentic_shadow_run_impl(
+                conn,
+                created_by_profile_id=created_by_profile_id,
+                input_batch_id=input_batch_id,
+                payload=payload,
+                trace_id=trace_id,
+            )
+            set_span_attributes(
+                root_span,
+                {
+                    "run.success": True,
+                    "shadow.stage": "extract",
+                    "shadow.agentic_run_id": result.get("agentic_run_id") or "",
+                    "shadow.chunk_count": result.get("_chunk_count") or 0,
+                    "shadow.candidate_count": result.get("_candidate_count") or 0,
+                    "shadow.matched_deterministic_candidate_count": int(
+                        (result.get("_candidate_origin_counter") or {}).get("matched_deterministic_candidate", 0)
+                    ),
+                    "shadow.agentic_only_candidate_count": int(
+                        (result.get("_candidate_origin_counter") or {}).get("agentic_only_candidate", 0)
+                    ),
+                },
+            )
+            mark_span_ok(root_span)
+            final_result = {k: v for k, v in result.items() if not str(k).startswith("_")}
+        except Exception as exc:
+            mark_span_error(root_span, exc)
+            raise
+
+    force_flush()
+    return final_result if final_result is not None else {}
+
+
+def _qualify_agentic_shadow_run_impl(
+    conn: Connection,
+    *,
+    created_by_profile_id: str,
+    input_batch_id: str,
+    agentic_run_id: str,
+    payload: dict[str, Any],
+    trace_id: str | None,
+) -> dict[str, Any]:
+    batch = _get_owned_batch(
+        conn,
+        created_by_profile_id=created_by_profile_id,
+        input_batch_id=input_batch_id,
+    )
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select id, summary
+            from project_input_agentic_runs
+            where id = %s and input_batch_id = %s
+            limit 1
+            """,
+            (agentic_run_id, input_batch_id),
+        )
+        run = cur.fetchone()
+        if not run:
+            raise ValueError("agentic_run_id no existe para ese input_batch_id.")
+
+        cur.execute(
+            """
+            select
+              c.id,
+              c.document_id,
+              c.deterministic_extracted_row_id,
+              c.source_type,
+              c.source_ref,
+              c.raw_text,
+              c.raw_name,
+              c.raw_unit,
+              c.raw_category,
+              c.raw_quantity,
+              c.raw_unit_price,
+              c.raw_total_price,
+              c.context_before,
+              c.context_after,
+              c.section_labels,
+              c.evidence_refs,
+              c.raw_columns,
+              c.table_signature,
+              c.extraction_confidence,
+              c.candidate_origin,
+              c.deterministic_normalized_supply_id
+            from project_input_agentic_candidates c
+            where c.agentic_run_id = %s
+            order by c.created_at asc, c.id asc
+            """,
+            (agentic_run_id,),
+        )
+        candidates = cur.fetchall()
+
+        with start_as_current_span(
+            "shadow_qualification",
+            kind="CHAIN",
+            attributes={
+                "shadow.candidate_count": len(candidates),
+                "shadow.document_count": len({str(c.get("document_id")) for c in candidates}),
+            },
+        ) as qualification_span:
+            label_counter: Counter[str] = Counter()
+            qualified_supply_count = 0
+            monitorable_supply_count = 0
+            candidates_with_judgments: list[tuple[dict[str, Any], dict[str, Any]]] = []
+
+            for candidate in candidates:
+                judgment = _infer_judgment(candidate)
+                candidates_with_judgments.append((candidate, judgment))
+                label_counter[judgment["judgment_label"]] += 1
+                if judgment["is_qualified"]:
+                    qualified_supply_count += 1
+                if judgment["is_market_monitorable"] is True:
+                    monitorable_supply_count += 1
+
+                retrieval_context = {
+                    "source_type": candidate.get("source_type"),
+                    "source_ref": candidate.get("source_ref") or {},
+                    "context_before": candidate.get("context_before") or [],
+                    "context_after": candidate.get("context_after") or [],
+                    "section_labels": candidate.get("section_labels") or [],
+                    "raw_columns": candidate.get("raw_columns") or {},
+                    "table_signature": candidate.get("table_signature"),
+                    "candidate_origin": candidate.get("candidate_origin"),
+                }
+
+                cur.execute(
+                    """
+                    insert into project_input_agentic_row_judgments (
+                      agentic_run_id,
+                      input_batch_id,
+                      candidate_id,
+                      extracted_row_id,
+                      document_id,
+                      judgment_label,
+                      is_qualified,
+                      is_market_monitorable,
+                      confidence,
+                      rationale_summary,
+                      evidence,
+                      retrieval_context
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+                    on conflict (agentic_run_id, candidate_id)
+                    do update set
+                      extracted_row_id = excluded.extracted_row_id,
+                      document_id = excluded.document_id,
+                      judgment_label = excluded.judgment_label,
+                      is_qualified = excluded.is_qualified,
+                      is_market_monitorable = excluded.is_market_monitorable,
+                      confidence = excluded.confidence,
+                      rationale_summary = excluded.rationale_summary,
+                      evidence = excluded.evidence,
+                      retrieval_context = excluded.retrieval_context,
+                      updated_at = now()
+                    """,
+                    (
+                        agentic_run_id,
+                        input_batch_id,
+                        candidate["id"],
+                        candidate.get("deterministic_extracted_row_id"),
+                        candidate["document_id"],
+                        judgment["judgment_label"],
+                        judgment["is_qualified"],
+                        judgment["is_market_monitorable"],
+                        judgment["confidence"],
+                        judgment["rationale_summary"],
+                        _json(judgment["evidence_refs"], []),
+                        _json(retrieval_context, {}),
+                    ),
+                )
+
+            set_span_attributes(
+                qualification_span,
+                {
+                    "shadow.qualified_supply_count": qualified_supply_count,
+                    "shadow.rejected_candidate_count": max(len(candidates) - qualified_supply_count, 0),
+                    "shadow.monitorable_candidate_count": monitorable_supply_count,
+                    "shadow.heading_or_chapter_count": int(label_counter.get("heading_or_chapter", 0)),
+                    "shadow.scope_or_activity_count": int(label_counter.get("scope_or_activity", 0)),
+                    "shadow.bundle_or_mixed_scope_count": int(label_counter.get("bundle_or_mixed_scope", 0)),
+                    "shadow.labor_or_service_count": int(label_counter.get("labor_or_service", 0)),
+                    "shadow.unresolved_count": int(label_counter.get("unresolved", 0)),
+                    "shadow.qualification_ratio": (
+                        round(qualified_supply_count / len(candidates), 4) if candidates else 0.0
+                    ),
+                },
+            )
+            mark_span_ok(qualification_span)
+
+        artifacts = _build_shadow_supply_artifacts(
+            candidates_with_judgments,
+            agentic_run_id=agentic_run_id,
+            input_batch_id=input_batch_id,
+            project_id=str(batch.get("project_id")) if batch.get("project_id") else None,
+        )
+
+        with start_as_current_span(
+            "shadow_normalization",
+            kind="CHAIN",
+            attributes={
+                "shadow.qualified_supply_count": qualified_supply_count,
+                "shadow.shadow_supply_count": len(artifacts["supplies"]),
+                "shadow.normalization_ratio": (
+                    round(len(artifacts["supplies"]) / qualified_supply_count, 4)
+                    if qualified_supply_count
+                    else 0.0
+                ),
+                "shadow.linked_to_deterministic_supply_count": sum(
+                    1 for supply in artifacts["supplies"] if supply.get("deterministic_normalized_supply_id")
+                ),
+            },
+        ) as normalization_span:
+            cur.execute("delete from project_input_agentic_row_links where agentic_run_id = %s", (agentic_run_id,))
+            cur.execute("delete from project_input_agentic_mappings where agentic_run_id = %s", (agentic_run_id,))
+            cur.execute("delete from project_input_agentic_supplies where agentic_run_id = %s", (agentic_run_id,))
+
+            for supply in artifacts["supplies"]:
+                cur.execute(
+                    """
+                    insert into project_input_agentic_supplies (
+                      id, agentic_run_id, input_batch_id, project_id, pipeline_variant, display_name,
+                      canonical_name, canonical_unit, canonical_category, monitorability_status,
+                      market_mapping_status, quantity_total, unit_price_reference, total_price_reference,
+                      source_document_ids, source_extracted_row_ids, deterministic_normalized_supply_id,
+                      confidence, rationale_summary, retrieval_evidence, mapping_candidate
+                    )
+                    values (
+                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                      %s::jsonb, %s::jsonb, %s, %s, %s, %s::jsonb, %s::jsonb
+                    )
+                    """,
+                    (
+                        supply["id"], supply["agentic_run_id"], supply["input_batch_id"], supply["project_id"],
+                        supply["pipeline_variant"], supply["display_name"], supply["canonical_name"],
+                        supply["canonical_unit"], supply["canonical_category"], supply["monitorability_status"],
+                        supply["market_mapping_status"], supply["quantity_total"], supply["unit_price_reference"],
+                        supply["total_price_reference"], _json(supply["source_document_ids"], []),
+                        _json(supply["source_extracted_row_ids"], []), supply["deterministic_normalized_supply_id"],
+                        supply["confidence"], supply["rationale_summary"], _json(supply["retrieval_evidence"], []),
+                        _json(supply["mapping_candidate"], {}),
+                    ),
+                )
+
+            for row_link in artifacts["row_links"]:
+                cur.execute(
+                    """
+                    insert into project_input_agentic_row_links (
+                      id, agentic_run_id, candidate_id, extracted_row_id, agentic_supply_id, link_reason
+                    )
+                    values (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        row_link["id"], row_link["agentic_run_id"], row_link["candidate_id"],
+                        row_link["extracted_row_id"], row_link["agentic_supply_id"], row_link["link_reason"],
+                    ),
+                )
+            mark_span_ok(normalization_span)
+
+        with start_as_current_span(
+            "shadow_market_mapping",
+            kind="CHAIN",
+            attributes={
+                "shadow.shadow_supply_count": len(artifacts["supplies"]),
+                "shadow.mapped_shadow_supply_count": artifacts["summary"].get("mapped_shadow_supply_count", 0),
+                "shadow.unmapped_shadow_supply_count": artifacts["summary"].get("unmapped_shadow_supply_count", 0),
+                "shadow.monitorable_shadow_supply_count": artifacts["summary"].get("monitorable_shadow_supply_count", 0),
+            },
+        ) as mapping_span:
+            for mapping in artifacts["mappings"]:
+                cur.execute(
+                    """
+                    insert into project_input_agentic_mappings (
+                      id, agentic_run_id, input_batch_id, project_id, agentic_supply_id, mapping_status,
+                      mapping_strategy, series_key, series_id, source_name, source_url, confidence, rationale_summary
+                    )
+                    values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        mapping["id"], mapping["agentic_run_id"], mapping["input_batch_id"], mapping["project_id"],
+                        mapping["agentic_supply_id"], mapping["mapping_status"], mapping["mapping_strategy"],
+                        mapping["series_key"], mapping["series_id"], mapping["source_name"], mapping["source_url"],
+                        mapping["confidence"], mapping["rationale_summary"],
+                    ),
+                )
+            mark_span_ok(mapping_span)
+
+        summary = {
+            **(run.get("summary") or {}),
+            **(payload.get("summary") or {}),
+            "candidate_count": len(candidates),
+            "qualified_supply_count": qualified_supply_count,
+            "rejected_candidate_count": max(len(candidates) - qualified_supply_count, 0),
+            "monitorable_supply_count": monitorable_supply_count,
+            "judgment_counts": _summary_from_counter(label_counter),
+            **artifacts["summary"],
+        }
+        cur.execute(
+            """
+            update project_input_agentic_runs
+            set
+              status = %s,
+              model_name = coalesce(%s, model_name),
+              retrieval_strategy = coalesce(%s, retrieval_strategy),
+              prompt_version = coalesce(%s, prompt_version),
+              summary = %s::jsonb,
+              updated_at = now()
+            where id = %s
+            """,
+            (
+                "completed",
+                payload.get("model_name"),
+                payload.get("retrieval_strategy"),
+                payload.get("prompt_version"),
+                _json(_summary_with_observability(summary, trace_id), {}),
+                agentic_run_id,
+            ),
+        )
+
+    return {
+        "agentic_run_id": agentic_run_id,
+        "input_batch_id": input_batch_id,
+        "project_id": str(batch.get("project_id")) if batch.get("project_id") else None,
+        "candidate_count": len(candidates),
+        "qualified_supply_count": qualified_supply_count,
+        "rejected_candidate_count": max(len(candidates) - qualified_supply_count, 0),
+        "monitorable_supply_count": monitorable_supply_count,
+        "judgment_counts": _summary_from_counter(label_counter),
+        "observability": _observability_payload(trace_id),
+        "_artifacts_summary": artifacts["summary"],
+    }
 
 
 def create_agentic_shadow_run(
@@ -484,167 +1456,150 @@ def qualify_agentic_shadow_run(
     payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload = payload or {}
-    batch = _get_owned_batch(
-        conn,
-        created_by_profile_id=created_by_profile_id,
-        input_batch_id=input_batch_id,
-    )
+    trace_id: str | None = None
+    final_result: dict[str, Any] | None = None
 
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            select id, summary
-            from project_input_agentic_runs
-            where id = %s and input_batch_id = %s
-            limit 1
-            """,
-            (agentic_run_id, input_batch_id),
-        )
-        run = cur.fetchone()
-        if not run:
-            raise ValueError("agentic_run_id no existe para ese input_batch_id.")
-
-        cur.execute(
-            """
-            select
-              c.id,
-              c.document_id,
-              c.deterministic_extracted_row_id,
-              c.source_type,
-              c.source_ref,
-              c.raw_text,
-              c.raw_name,
-              c.raw_unit,
-              c.raw_category,
-              c.raw_quantity,
-              c.raw_unit_price,
-              c.raw_total_price,
-              c.context_before,
-              c.context_after,
-              c.section_labels,
-              c.evidence_refs,
-              c.raw_columns,
-              c.table_signature,
-              c.extraction_confidence,
-              c.candidate_origin
-            from project_input_agentic_candidates c
-            where c.agentic_run_id = %s
-            order by c.created_at asc, c.id asc
-            """,
-            (agentic_run_id,),
-        )
-        candidates = cur.fetchall()
-
-        label_counter: Counter[str] = Counter()
-        qualified_supply_count = 0
-        monitorable_supply_count = 0
-
-        for candidate in candidates:
-            judgment = _infer_judgment(candidate)
-            label_counter[judgment["judgment_label"]] += 1
-            if judgment["is_qualified"]:
-                qualified_supply_count += 1
-            if judgment["is_market_monitorable"] is True:
-                monitorable_supply_count += 1
-
-            retrieval_context = {
-                "source_type": candidate.get("source_type"),
-                "source_ref": candidate.get("source_ref") or {},
-                "context_before": candidate.get("context_before") or [],
-                "context_after": candidate.get("context_after") or [],
-                "section_labels": candidate.get("section_labels") or [],
-                "raw_columns": candidate.get("raw_columns") or {},
-                "table_signature": candidate.get("table_signature"),
-                "candidate_origin": candidate.get("candidate_origin"),
-            }
-
-            cur.execute(
-                """
-                insert into project_input_agentic_row_judgments (
-                  agentic_run_id,
-                  input_batch_id,
-                  candidate_id,
-                  extracted_row_id,
-                  document_id,
-                  judgment_label,
-                  is_qualified,
-                  is_market_monitorable,
-                  confidence,
-                  rationale_summary,
-                  evidence,
-                  retrieval_context
-                )
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
-                on conflict (agentic_run_id, candidate_id)
-                do update set
-                  extracted_row_id = excluded.extracted_row_id,
-                  document_id = excluded.document_id,
-                  judgment_label = excluded.judgment_label,
-                  is_qualified = excluded.is_qualified,
-                  is_market_monitorable = excluded.is_market_monitorable,
-                  confidence = excluded.confidence,
-                  rationale_summary = excluded.rationale_summary,
-                  evidence = excluded.evidence,
-                  retrieval_context = excluded.retrieval_context,
-                  updated_at = now()
-                """,
-                (
-                    agentic_run_id,
-                    input_batch_id,
-                    candidate["id"],
-                    candidate.get("deterministic_extracted_row_id"),
-                    candidate["document_id"],
-                    judgment["judgment_label"],
-                    judgment["is_qualified"],
-                    judgment["is_market_monitorable"],
-                    judgment["confidence"],
-                    judgment["rationale_summary"],
-                    _json(judgment["evidence_refs"], []),
-                    _json(retrieval_context, {}),
+    with start_as_current_span(
+        "agentic_shadow_run",
+        kind="CHAIN",
+        attributes={
+            "shadow.stage": "qualify",
+            "shadow.input_batch_id": input_batch_id,
+            "shadow.agentic_run_id": agentic_run_id,
+            "shadow.model_name": str(payload.get("model_name") or ""),
+            "shadow.retrieval_strategy": str(payload.get("retrieval_strategy") or ""),
+            "shadow.prompt_version": str(payload.get("prompt_version") or ""),
+            **_agentic_shadow_comparison_attrs(
+                payload={"pipeline_variant": "agentic_shadow", **payload},
+                input_batch_id=input_batch_id,
+            ),
+        },
+    ) as root_span:
+        trace_id = current_trace_id(root_span)
+        try:
+            set_span_attributes(
+                root_span,
+                _agentic_shadow_comparison_attrs(
+                    payload={"pipeline_variant": "agentic_shadow", **payload},
+                    input_batch_id=input_batch_id,
                 ),
             )
+            result = _qualify_agentic_shadow_run_impl(
+                conn,
+                created_by_profile_id=created_by_profile_id,
+                input_batch_id=input_batch_id,
+                agentic_run_id=agentic_run_id,
+                payload=payload,
+                trace_id=trace_id,
+            )
+            set_span_attributes(
+                root_span,
+                {
+                    "run.success": True,
+                    "shadow.stage": "qualify",
+                    "shadow.candidate_count": result.get("candidate_count") or 0,
+                    "shadow.qualified_supply_count": result.get("qualified_supply_count") or 0,
+                    "shadow.rejected_candidate_count": result.get("rejected_candidate_count") or 0,
+                    "shadow.monitorable_candidate_count": result.get("monitorable_supply_count") or 0,
+                    "shadow.shadow_supply_count": (result.get("_artifacts_summary") or {}).get("shadow_supply_count", 0),
+                    "shadow.mapped_shadow_supply_count": (result.get("_artifacts_summary") or {}).get("mapped_shadow_supply_count", 0),
+                    "shadow.unmapped_shadow_supply_count": (result.get("_artifacts_summary") or {}).get("unmapped_shadow_supply_count", 0),
+                },
+            )
+            mark_span_ok(root_span)
+            final_result = {k: v for k, v in result.items() if not str(k).startswith("_")}
+        except Exception as exc:
+            mark_span_error(root_span, exc)
+            raise
 
-        summary = {
-            **(run.get("summary") or {}),
-            **(payload.get("summary") or {}),
-            "candidate_count": len(candidates),
-            "qualified_supply_count": qualified_supply_count,
-            "rejected_candidate_count": max(len(candidates) - qualified_supply_count, 0),
-            "monitorable_supply_count": monitorable_supply_count,
-            "judgment_counts": _summary_from_counter(label_counter),
-        }
-        cur.execute(
-            """
-            update project_input_agentic_runs
-            set
-              status = %s,
-              model_name = coalesce(%s, model_name),
-              retrieval_strategy = coalesce(%s, retrieval_strategy),
-              prompt_version = coalesce(%s, prompt_version),
-              summary = %s::jsonb,
-              updated_at = now()
-            where id = %s
-            """,
-            (
-                "completed",
-                payload.get("model_name"),
-                payload.get("retrieval_strategy"),
-                payload.get("prompt_version"),
-                _json(summary, {}),
-                agentic_run_id,
-            ),
-        )
+    force_flush()
+    return final_result if final_result is not None else {}
 
-    return {
-        "agentic_run_id": agentic_run_id,
-        "input_batch_id": input_batch_id,
-        "project_id": str(batch.get("project_id")) if batch.get("project_id") else None,
-        "candidate_count": len(candidates),
-        "qualified_supply_count": qualified_supply_count,
-        "rejected_candidate_count": max(len(candidates) - qualified_supply_count, 0),
-        "monitorable_supply_count": monitorable_supply_count,
-        "judgment_counts": _summary_from_counter(label_counter),
+
+def run_agentic_shadow_pipeline(
+    conn: Connection,
+    *,
+    created_by_profile_id: str,
+    input_batch_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    trace_id: str | None = None
+    final_result: dict[str, Any] | None = None
+    qualification_payload = {
+        "model_name": payload.get("qualification_model_name") or "shadow_qualification_heuristic_v1",
+        "retrieval_strategy": payload.get("qualification_retrieval_strategy") or payload.get("retrieval_strategy"),
+        "prompt_version": payload.get("qualification_prompt_version") or "heuristic_seed_v1",
+        "summary": payload.get("qualification_summary") or payload.get("summary") or {},
+        "benchmark_dataset": payload.get("benchmark_dataset"),
+        "benchmark_instance_id": payload.get("benchmark_instance_id"),
+        "pipeline_version": payload.get("pipeline_version"),
     }
+
+    with start_as_current_span(
+        "agentic_shadow_run",
+        kind="CHAIN",
+        attributes={
+            "shadow.stage": "pipeline",
+            "shadow.input_batch_id": input_batch_id,
+            "shadow.model_name": str(payload.get("model_name") or _vertex_model()),
+            "shadow.retrieval_strategy": str(payload.get("retrieval_strategy") or ""),
+            "shadow.prompt_version": str(payload.get("prompt_version") or ""),
+            **_agentic_shadow_comparison_attrs(payload=payload, input_batch_id=input_batch_id),
+        },
+    ) as root_span:
+        trace_id = current_trace_id(root_span)
+        try:
+            extract_result = _extract_agentic_shadow_run_impl(
+                conn,
+                created_by_profile_id=created_by_profile_id,
+                input_batch_id=input_batch_id,
+                payload=payload,
+                trace_id=trace_id,
+            )
+            batch = extract_result.get("_batch") or {}
+            set_span_attributes(
+                root_span,
+                _agentic_shadow_comparison_attrs(
+                    payload=payload,
+                    input_batch_id=input_batch_id,
+                    project_id=str(batch.get("project_id") or "") or None,
+                ),
+            )
+            qualify_result = _qualify_agentic_shadow_run_impl(
+                conn,
+                created_by_profile_id=created_by_profile_id,
+                input_batch_id=input_batch_id,
+                agentic_run_id=str(extract_result["agentic_run_id"]),
+                payload=qualification_payload,
+                trace_id=trace_id,
+            )
+            set_span_attributes(
+                root_span,
+                {
+                    "run.success": True,
+                    "shadow.stage": "pipeline",
+                    "shadow.agentic_run_id": extract_result.get("agentic_run_id") or "",
+                    "shadow.chunk_count": extract_result.get("_chunk_count") or 0,
+                    "shadow.candidate_count": qualify_result.get("candidate_count") or 0,
+                    "shadow.qualified_supply_count": qualify_result.get("qualified_supply_count") or 0,
+                    "shadow.rejected_candidate_count": qualify_result.get("rejected_candidate_count") or 0,
+                    "shadow.monitorable_candidate_count": qualify_result.get("monitorable_supply_count") or 0,
+                    "shadow.shadow_supply_count": (qualify_result.get("_artifacts_summary") or {}).get("shadow_supply_count", 0),
+                    "shadow.mapped_shadow_supply_count": (qualify_result.get("_artifacts_summary") or {}).get("mapped_shadow_supply_count", 0),
+                    "shadow.unmapped_shadow_supply_count": (qualify_result.get("_artifacts_summary") or {}).get("unmapped_shadow_supply_count", 0),
+                },
+            )
+            mark_span_ok(root_span)
+            final_result = {
+                **extract_result,
+                **{k: v for k, v in qualify_result.items() if not str(k).startswith("_")},
+            }
+        except Exception as exc:
+            mark_span_error(root_span, exc)
+            raise
+
+    force_flush()
+    return final_result if final_result is not None else {}
 
 
 def get_project_supply_selection_comparison(
@@ -730,6 +1685,48 @@ def get_project_supply_selection_comparison(
         )
         candidates = cur.fetchall()
 
+        cur.execute(
+            """
+            select
+              s.id,
+              s.display_name,
+              s.canonical_name,
+              s.canonical_unit,
+              s.canonical_category,
+              s.monitorability_status,
+              s.market_mapping_status,
+              s.quantity_total,
+              s.total_price_reference,
+              s.deterministic_normalized_supply_id,
+              s.confidence,
+              s.rationale_summary
+            from project_input_agentic_supplies s
+            where s.agentic_run_id = %s
+            order by s.total_price_reference desc nulls last, s.created_at asc
+            """,
+            (agentic_run_id,),
+        )
+        supplies = cur.fetchall()
+
+        cur.execute(
+            """
+            select
+              m.id,
+              m.agentic_supply_id,
+              m.mapping_status,
+              m.mapping_strategy,
+              m.series_key,
+              m.source_name,
+              m.confidence,
+              m.rationale_summary
+            from project_input_agentic_mappings m
+            where m.agentic_run_id = %s
+            order by m.created_at asc
+            """,
+            (agentic_run_id,),
+        )
+        mappings = cur.fetchall()
+
     deterministic_counts = deterministic.get("row_counts") or {}
     agentic_summary = run.get("summary") or {}
 
@@ -747,6 +1744,8 @@ def get_project_supply_selection_comparison(
             "run": run,
             "summary": agentic_summary,
             "candidates": candidates,
+            "supplies": supplies,
+            "mappings": mappings,
         },
         "comparison": comparison,
         "provenance": {

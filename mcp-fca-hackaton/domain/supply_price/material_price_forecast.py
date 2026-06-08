@@ -10,6 +10,7 @@ from decimal import Decimal
 from typing import Any
 
 from domain.observability.arize_tracing import (
+    comparison_attributes,
     current_trace_id,
     force_flush,
     mark_span_error,
@@ -797,10 +798,8 @@ def material_price_forecast(
         "material_price_forecast",
         kind="CHAIN",
         attributes={
-            "project.id": project_id,
             "user.id": user_id,
             "run.id": run_id or "",
-            "pipeline.variant": "deterministic",
             "pipeline.name": "supply_intelligence",
             "forecast.horizon_months": horizon_months,
             "forecast.history_months": history_months,
@@ -808,6 +807,11 @@ def material_price_forecast(
             "run.dry_run": dry_run,
             "run.persist_requested": persist,
             "material_queries.count": len(material_queries or []),
+            **comparison_attributes(
+                pipeline_variant="deterministic",
+                project_id=project_id,
+                benchmark_instance_id=project_id,
+            ),
         },
     ) as root_span:
         trace_id = current_trace_id(root_span)
@@ -832,10 +836,28 @@ def material_price_forecast(
 
         if isinstance(result, dict):
             result["observability"] = {
-                "arize_tracing_enabled": tracing_enabled(),
-                "arize_status": tracing_status(),
+                "phoenix_tracing_enabled": tracing_enabled(),
+                "phoenix_status": tracing_status(),
                 "trace_id": trace_id,
             }
+            selection_diagnostics = result.get("selection_diagnostics") or {}
+            set_span_attributes(
+                root_span,
+                comparison_attributes(
+                    pipeline_variant="deterministic",
+                    project_id=str(result.get("project_id") or project_id),
+                    input_batch_id=(
+                        str(selection_diagnostics.get("input_batch_id"))
+                        if selection_diagnostics.get("input_batch_id")
+                        else None
+                    ),
+                    benchmark_instance_id=(
+                        str(selection_diagnostics.get("input_batch_id"))
+                        if selection_diagnostics.get("input_batch_id")
+                        else str(result.get("project_id") or project_id)
+                    ),
+                ),
+            )
 
         if not isinstance(result, dict) or not result.get("success"):
             set_span_attributes(

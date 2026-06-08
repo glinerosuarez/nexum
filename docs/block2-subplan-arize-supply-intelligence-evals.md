@@ -5,6 +5,10 @@ Date: 2026-06-03
 ## Summary
 This subplan defines how Arize should be used in the hackathon version of Nexum.
 
+Note: runtime tracing has since been migrated to Phoenix Cloud, but this document remains useful as the conceptual evaluation design. The current operational handoff for trace comparison work is:
+
+[block2-subplan-phoenix-iteration-comparison.md](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/docs/block2-subplan-phoenix-iteration-comparison.md)
+
 Arize is not the product. Arize is the tracing, evaluation, and improvement loop that proves the product is getting better.
 
 The product narrative remains:

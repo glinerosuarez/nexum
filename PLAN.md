@@ -30,7 +30,8 @@ This is a positioning pivot, not a runtime reset. The existing architecture/runt
 3. Input-quality / retrieval workstream: [docs/block2-subplan-supply-agent-input-quality.md](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/docs/block2-subplan-supply-agent-input-quality.md)
 4. Arize tracing/evaluation workstream: [docs/block2-subplan-arize-supply-intelligence-evals.md](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/docs/block2-subplan-arize-supply-intelligence-evals.md)
 5. Shadow agentic retrieval workstream: [docs/block2-subplan-agentic-retrieval-shadow-pipeline.md](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/docs/block2-subplan-agentic-retrieval-shadow-pipeline.md)
-6. Deterministic baseline for later comparison: [docs/block2-deterministic-baseline-2026-06-03.md](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/docs/block2-deterministic-baseline-2026-06-03.md)
+6. Phoenix iteration-comparison handoff: [docs/block2-subplan-phoenix-iteration-comparison.md](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/docs/block2-subplan-phoenix-iteration-comparison.md)
+7. Deterministic baseline for later comparison: [docs/block2-deterministic-baseline-2026-06-03.md](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/docs/block2-deterministic-baseline-2026-06-03.md)
 
 ## Explicit Next-Step Hypothesis
 The next major improvement track should evaluate a retrieval-assisted or agentic retrieval pipeline that:
