@@ -705,7 +705,7 @@ def _configured_source_mapping(source_row: dict[str, Any] | None) -> dict[str, A
     return {
         "mapping_status": "mapped",
         "monitorability_status": "monitorable",
-        "mapping_strategy": "configured_source",
+        "mapping_strategy": "retrieval_catalog_match",
         "series_key": series_key,
         "series_id": str(parse_config.get("series_id") or "").strip() or None,
         "source_name": source_row.get("source_name"),
@@ -731,11 +731,12 @@ def _heuristic_source_mapping(supply: dict[str, Any]) -> dict[str, Any]:
 
     has_material_signal = _has_material_signal(str(supply.get("canonical_name") or ""))
     if series_key:
-        strategy = "category_keyword_fallback" if mapping_hint and mapping_hint != "keyword_fallback" else "keyword_fallback"
-        confidence = "medium" if strategy == "category_keyword_fallback" else "medium"
+        strategy = "keyword_fallback"
+        used_category_hint = bool(mapping_hint and mapping_hint != "keyword_fallback")
+        confidence = "medium"
         rationale = (
             f"Shadow supply matched market family `{series_key}` via category-aware fallback `{mapping_hint}`."
-            if strategy == "category_keyword_fallback"
+            if used_category_hint
             else f"Shadow supply matched market family `{series_key}` by keyword fallback."
         )
         return {

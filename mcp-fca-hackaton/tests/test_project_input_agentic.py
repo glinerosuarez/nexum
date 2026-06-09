@@ -213,7 +213,7 @@ class TestAgenticShadowQualification(unittest.TestCase):
         )
 
         mapping = artifacts["mappings"][0]
-        self.assertEqual(mapping["mapping_strategy"], "configured_source")
+        self.assertEqual(mapping["mapping_strategy"], "retrieval_catalog_match")
         self.assertEqual(mapping["series_key"], "steel")
         self.assertEqual(mapping["confidence"], "high")
 
@@ -246,7 +246,7 @@ class TestAgenticShadowQualification(unittest.TestCase):
         mapping = artifacts["mappings"][0]
         self.assertEqual(supply["market_mapping_status"], "mapped")
         self.assertEqual(mapping["series_key"], "cement")
-        self.assertEqual(mapping["mapping_strategy"], "category_keyword_fallback")
+        self.assertEqual(mapping["mapping_strategy"], "keyword_fallback")
         self.assertIn("category-aware fallback", mapping["rationale_summary"])
 
 
