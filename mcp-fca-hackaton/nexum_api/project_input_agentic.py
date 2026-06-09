@@ -104,6 +104,124 @@ _SERIES_KEYWORDS: dict[str, set[str]] = {
     "lumber": {"madera", "lamina", "tablero", "puerta"},
 }
 
+_CATEGORY_SERIES_HINTS: dict[str, list[tuple[str, set[str]]]] = {
+    "steel": [
+        (
+            "electrical_or_metal_system",
+            {
+                "tableros",
+                "instalaciones electricas",
+                "instalaciones eléctricas",
+                "iluminacion",
+                "iluminación",
+                "aire acondicionado",
+                "sistema de aire acondicionado",
+                "ventanas",
+                "elementos arquitectonicos",
+                "elementos arquitectónicos",
+                "divisiones en vidrio templado",
+            },
+        ),
+    ],
+    "cement": [
+        (
+            "masonry_or_finish_system",
+            {
+                "mesones",
+                "pisos",
+                "enchapes",
+                "mamposteria",
+                "mampostería",
+                "panetes",
+                "morteros",
+            },
+        ),
+    ],
+    "lumber": [
+        (
+            "carpentry_or_openings_system",
+            {
+                "carpinteria",
+                "carpintería",
+                "puertas",
+                "closets",
+                "muebles",
+            },
+        ),
+    ],
+}
+
+_NAME_SERIES_HINTS: dict[str, list[tuple[str, set[str]]]] = {
+    "steel": [
+        (
+            "metal_fixture_keywords",
+            {
+                "aluminio",
+                "inox",
+                "acero inoxidable",
+                "metalica",
+                "metalico",
+                "baranda",
+                "barandas",
+                "pasamanos",
+                "rejilla",
+                "rejillas",
+                "toallero",
+                "jabonera",
+                "portarollo",
+                "griferia",
+                "grifería",
+                "cableado",
+                "cable",
+                "cobre",
+                "awg",
+                "ducto",
+                "fancoil",
+            },
+        ),
+    ],
+    "cement": [
+        (
+            "masonry_finish_keywords",
+            {
+                "alistado",
+                "mortero",
+                "concreto",
+                "cemento",
+                "fibrocemento",
+                "piso",
+                "pisos",
+                "enchape",
+                "enchapes",
+                "boquilla",
+                "pegante",
+                "nivelacion",
+                "nivelación",
+            },
+        ),
+    ],
+    "lumber": [
+        (
+            "opening_finish_keywords",
+            {
+                "puerta",
+                "puertas",
+                "ventana",
+                "ventanas",
+                "closet",
+                "closets",
+                "madera",
+                "tablero",
+                "lamina",
+                "lamina rh",
+                "melamina",
+                "mdf",
+                "pvc",
+            },
+        ),
+    ],
+}
+
 _CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 _CONFIDENCE_BY_RANK = {value: key for key, value in _CONFIDENCE_RANK.items()}
 _SHADOW_SPAN_SAMPLE_LIMIT = 8
@@ -557,12 +675,131 @@ def _infer_series_key(value: Any) -> str | None:
     return None
 
 
+def _find_series_hint(values: list[str]) -> tuple[str | None, str | None]:
+    normalized_values = [_normalize_text(value) for value in values if str(value or "").strip()]
+    joined = " ".join(normalized_values)
+    tokens = set(_word_tokens(joined))
+
+    for series_key, hints in _NAME_SERIES_HINTS.items():
+        for hint_name, keywords in hints:
+            normalized_keywords = {_normalize_text(keyword) for keyword in keywords}
+            if tokens & normalized_keywords or any(keyword in joined for keyword in normalized_keywords):
+                return series_key, hint_name
+
+    for series_key, hints in _CATEGORY_SERIES_HINTS.items():
+        for hint_name, keywords in hints:
+            normalized_keywords = {_normalize_text(keyword) for keyword in keywords}
+            if any(keyword in joined for keyword in normalized_keywords):
+                return series_key, hint_name
+
+    return None, None
+
+
+def _configured_source_mapping(source_row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not source_row:
+        return None
+    parse_config = source_row.get("parse_config") if isinstance(source_row.get("parse_config"), dict) else {}
+    series_key = str(parse_config.get("series_key") or "").strip() or None
+    if not series_key:
+        return None
+    return {
+        "mapping_status": "mapped",
+        "monitorability_status": "monitorable",
+        "mapping_strategy": "configured_source",
+        "series_key": series_key,
+        "series_id": str(parse_config.get("series_id") or "").strip() or None,
+        "source_name": source_row.get("source_name"),
+        "source_url": source_row.get("source_url"),
+        "confidence": "high",
+        "rationale_summary": (
+            f"Shadow supply inherited configured source mapping for deterministic supply `{source_row.get('supply_id')}`."
+        ),
+        "mapping_hint": "deterministic_configured_source",
+    }
+
+
+def _heuristic_source_mapping(supply: dict[str, Any]) -> dict[str, Any]:
+    name_parts = [
+        str(supply.get("canonical_name") or ""),
+        str(supply.get("display_name") or ""),
+        str(supply.get("canonical_category") or ""),
+    ]
+    series_key = _infer_series_key(" ".join(name_parts))
+    mapping_hint: str | None = "keyword_fallback" if series_key else None
+    if not series_key:
+        series_key, mapping_hint = _find_series_hint(name_parts)
+
+    has_material_signal = _has_material_signal(str(supply.get("canonical_name") or ""))
+    if series_key:
+        strategy = "category_keyword_fallback" if mapping_hint and mapping_hint != "keyword_fallback" else "keyword_fallback"
+        confidence = "medium" if strategy == "category_keyword_fallback" else "medium"
+        rationale = (
+            f"Shadow supply matched market family `{series_key}` via category-aware fallback `{mapping_hint}`."
+            if strategy == "category_keyword_fallback"
+            else f"Shadow supply matched market family `{series_key}` by keyword fallback."
+        )
+        return {
+            "mapping_status": "mapped",
+            "monitorability_status": "monitorable",
+            "mapping_strategy": strategy,
+            "series_key": series_key,
+            "series_id": None,
+            "source_name": "shadow_keyword_mapping",
+            "source_url": None,
+            "confidence": confidence,
+            "rationale_summary": rationale,
+            "mapping_hint": mapping_hint,
+        }
+
+    return {
+        "mapping_status": "unmapped",
+        "monitorability_status": "monitorable" if has_material_signal else "unresolved",
+        "mapping_strategy": "unmapped",
+        "series_key": None,
+        "series_id": None,
+        "source_name": None,
+        "source_url": None,
+        "confidence": "low",
+        "rationale_summary": "Shadow supply remains unmapped after configured-source lookup and category-aware fallback.",
+        "mapping_hint": None,
+    }
+
+
+def _load_supply_price_sources_by_supply_id(
+    conn: Connection,
+    supply_ids: list[str],
+) -> dict[str, dict[str, Any]]:
+    if not supply_ids:
+        return {}
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            select supply_id, source_name, source_url, parse_config
+            from supply_price_sources
+            where supply_id = any(%s)
+              and is_active = true
+            order by priority asc, created_at asc
+            """,
+            (supply_ids,),
+        )
+        rows = cur.fetchall()
+
+    grouped: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        supply_id = str(row.get("supply_id") or "").strip()
+        if supply_id and supply_id not in grouped:
+            grouped[supply_id] = row
+    return grouped
+
+
 def _build_shadow_supply_artifacts(
     candidates_with_judgments: list[tuple[dict[str, Any], dict[str, Any]]],
     *,
     agentic_run_id: str,
     input_batch_id: str,
     project_id: str | None,
+    configured_sources_by_supply_id: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     grouped: dict[str, dict[str, Any]] = {}
 
@@ -627,42 +864,28 @@ def _build_shadow_supply_artifacts(
     monitorability_counter: Counter[str] = Counter()
 
     for supply in grouped.values():
-        series_key = _infer_series_key(
-            " ".join(
-                [
-                    str(supply.get("canonical_name") or ""),
-                    str(supply.get("display_name") or ""),
-                    str(supply.get("canonical_category") or ""),
-                ]
-            )
+        deterministic_supply_id = str(supply.get("deterministic_normalized_supply_id") or "").strip()
+        configured_mapping = _configured_source_mapping(
+            (configured_sources_by_supply_id or {}).get(deterministic_supply_id)
         )
-        has_material_signal = _has_material_signal(str(supply.get("canonical_name") or ""))
-        if series_key:
-            monitorability_status = "monitorable"
-            market_mapping_status = "mapped"
-            mapping_strategy = "keyword_fallback"
-            mapping_confidence = "medium"
-        else:
-            monitorability_status = "monitorable" if has_material_signal else "unresolved"
-            market_mapping_status = "unmapped"
-            mapping_strategy = "unmapped"
-            mapping_confidence = "low"
+        mapping_decision = configured_mapping or _heuristic_source_mapping(supply)
 
         supply_payload = {
             **{k: v for k, v in supply.items() if k not in {"candidate_ids", "link_reasons"}},
-            "monitorability_status": monitorability_status,
-            "market_mapping_status": market_mapping_status,
+            "monitorability_status": mapping_decision["monitorability_status"],
+            "market_mapping_status": mapping_decision["mapping_status"],
             "source_document_ids": sorted(supply["source_document_ids"]),
             "source_extracted_row_ids": sorted(supply["source_extracted_row_ids"]),
             "retrieval_evidence": supply["retrieval_evidence"][:6],
             "mapping_candidate": {
-                "series_key": series_key,
-                "mapping_strategy": mapping_strategy,
+                "series_key": mapping_decision["series_key"],
+                "mapping_strategy": mapping_decision["mapping_strategy"],
+                "mapping_hint": mapping_decision.get("mapping_hint"),
             },
         }
         supplies.append(supply_payload)
-        mapping_status_counter[market_mapping_status] += 1
-        monitorability_counter[monitorability_status] += 1
+        mapping_status_counter[mapping_decision["mapping_status"]] += 1
+        monitorability_counter[mapping_decision["monitorability_status"]] += 1
 
         mappings.append(
             {
@@ -671,18 +894,14 @@ def _build_shadow_supply_artifacts(
                 "input_batch_id": input_batch_id,
                 "project_id": project_id,
                 "agentic_supply_id": supply["id"],
-                "mapping_status": market_mapping_status,
-                "mapping_strategy": mapping_strategy,
-                "series_key": series_key,
-                "series_id": None,
-                "source_name": "shadow_keyword_mapping" if series_key else None,
-                "source_url": None,
-                "confidence": mapping_confidence,
-                "rationale_summary": (
-                    f"Shadow supply matched market family `{series_key}` by keyword fallback."
-                    if series_key
-                    else "Shadow supply remains unmapped after first-pass keyword monitorability check."
-                ),
+                "mapping_status": mapping_decision["mapping_status"],
+                "mapping_strategy": mapping_decision["mapping_strategy"],
+                "series_key": mapping_decision["series_key"],
+                "series_id": mapping_decision["series_id"],
+                "source_name": mapping_decision["source_name"],
+                "source_url": mapping_decision["source_url"],
+                "confidence": mapping_decision["confidence"],
+                "rationale_summary": mapping_decision["rationale_summary"],
             }
         )
 
@@ -1262,11 +1481,21 @@ def _qualify_agentic_shadow_run_impl(
             )
             mark_span_ok(qualification_span)
 
+        deterministic_supply_ids = sorted(
+            {
+                str(candidate.get("deterministic_normalized_supply_id") or "").strip()
+                for candidate, judgment in candidates_with_judgments
+                if judgment.get("is_qualified") and str(candidate.get("deterministic_normalized_supply_id") or "").strip()
+            }
+        )
+        configured_sources_by_supply_id = _load_supply_price_sources_by_supply_id(conn, deterministic_supply_ids)
+
         artifacts = _build_shadow_supply_artifacts(
             candidates_with_judgments,
             agentic_run_id=agentic_run_id,
             input_batch_id=input_batch_id,
             project_id=str(batch.get("project_id")) if batch.get("project_id") else None,
+            configured_sources_by_supply_id=configured_sources_by_supply_id,
         )
 
         with start_as_current_span(

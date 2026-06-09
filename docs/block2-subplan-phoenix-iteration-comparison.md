@@ -38,6 +38,37 @@ The following is already implemented and deployed:
   - shadow mappings
 6. Persisted observability metadata on shadow runs, including `trace_id` when tracing is enabled.
 
+### Progress Update: 2026-06-09
+Step 1 is now verified against the live Phoenix project, not only by screenshots.
+
+Verified benchmark example:
+- `project.id = 9722e72c-1041-4f11-bb3e-aabed4e66502`
+- `input_batch.id = 388cc3f5-3b19-442a-87f9-b4e05b3c0a66`
+- `agentic_shadow` trace version observed in Phoenix: `nexum-api-00039-hgz`
+
+What was verified in Phoenix:
+1. Filtering by `project.id` exposed both trace families for the same intake:
+  - `agentic_shadow_run`
+  - `material_price_forecast`
+2. `session.id = input_batch.id` is present on both root traces.
+3. The qualitative sampling payloads added for agent engineering are visible on:
+  - `extract_shadow_candidates`
+  - `shadow_qualification`
+  - `shadow_normalization`
+  - `shadow_market_mapping`
+
+What changed after verification:
+1. The qualitative JSON payloads were kept as span attributes.
+2. Mirrored span events were removed because they duplicated the same payloads and added Phoenix noise.
+
+Current execution point:
+1. `Step 1` can be treated as complete and verified.
+2. Active implementation focus moves to `Step 2` mapping coverage improvement.
+3. The preferred Step 2 order is:
+  - inherit deterministic configured source mappings when a shadow supply already links to a deterministic normalized supply
+  - improve category-aware fallback routing into the currently supported market families
+  - keep headings/scopes rejected upstream instead of inflating coverage with bad mappings
+
 ## Problem Statement
 Even though tracing is live, the current comparison story still has operational friction and quality gaps:
 

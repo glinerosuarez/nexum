@@ -179,6 +179,76 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(mapping_samples[0]["series_key"], "steel")
         self.assertEqual(mapping_samples[0]["agentic_supply_id"], artifacts["supplies"][0]["id"])
 
+    def test_build_shadow_supply_artifacts_prefers_configured_source(self):
+        candidate = {
+            "id": "candidate-1",
+            "document_id": "doc-1",
+            "deterministic_extracted_row_id": "row-1",
+            "deterministic_normalized_supply_id": "norm-1",
+            "raw_text": "Ventana en PVC blanco con rejillas",
+            "raw_name": "Ventana en PVC blanco con rejillas",
+            "raw_unit": "un",
+            "raw_category": "Ventanas",
+            "raw_quantity": 4,
+            "raw_unit_price": 350000,
+            "raw_total_price": 1400000,
+            "section_labels": ["VENTANAS"],
+            "evidence_refs": [],
+        }
+        judgment = _infer_judgment(candidate)
+
+        artifacts = _build_shadow_supply_artifacts(
+            [(candidate, judgment)],
+            agentic_run_id="run-1",
+            input_batch_id="batch-1",
+            project_id="project-1",
+            configured_sources_by_supply_id={
+                "norm-1": {
+                    "supply_id": "norm-1",
+                    "source_name": "fred_steel_formwork",
+                    "source_url": "https://fred.stlouisfed.org/series/WPU101707",
+                    "parse_config": {"series_key": "steel", "series_id": "WPU101707"},
+                }
+            },
+        )
+
+        mapping = artifacts["mappings"][0]
+        self.assertEqual(mapping["mapping_strategy"], "configured_source")
+        self.assertEqual(mapping["series_key"], "steel")
+        self.assertEqual(mapping["confidence"], "high")
+
+    def test_build_shadow_supply_artifacts_uses_category_aware_fallback(self):
+        candidate = {
+            "id": "candidate-1",
+            "document_id": "doc-1",
+            "deterministic_extracted_row_id": "row-1",
+            "deterministic_normalized_supply_id": None,
+            "raw_text": "S/I Alistado de piso. E=4cm (Habitaciones)",
+            "raw_name": "S/I Alistado de piso. E=4cm (Habitaciones)",
+            "raw_unit": "m2",
+            "raw_category": "Mesones",
+            "raw_quantity": 10,
+            "raw_unit_price": 80000,
+            "raw_total_price": 800000,
+            "section_labels": ["MESONES"],
+            "evidence_refs": [],
+        }
+        judgment = _infer_judgment(candidate)
+
+        artifacts = _build_shadow_supply_artifacts(
+            [(candidate, judgment)],
+            agentic_run_id="run-1",
+            input_batch_id="batch-1",
+            project_id="project-1",
+        )
+
+        supply = artifacts["supplies"][0]
+        mapping = artifacts["mappings"][0]
+        self.assertEqual(supply["market_mapping_status"], "mapped")
+        self.assertEqual(mapping["series_key"], "cement")
+        self.assertEqual(mapping["mapping_strategy"], "category_keyword_fallback")
+        self.assertIn("category-aware fallback", mapping["rationale_summary"])
+
 
 class TestAgenticShadowEndpoints(unittest.TestCase):
     def setUp(self):
