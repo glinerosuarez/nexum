@@ -221,6 +221,41 @@ _NAME_SERIES_HINTS: dict[str, list[tuple[str, set[str]]]] = {
     ],
 }
 
+_PLUMBING_NETWORK_CATEGORIES = {
+    "aparatos sanitarios",
+    "red aguas residuales",
+    "red sanitaria",
+    "red suministro de agua potable",
+    "red suministro de agua caliente",
+}
+
+_PLUMBING_NETWORK_KEYWORDS = {
+    "cpvc",
+    "hidraulica",
+    "hidraulico",
+    "punto hidraulico",
+    "punto sanitario",
+    "pvc-s",
+    "red hidraulica",
+    "red sanitaria",
+    "sanitaria",
+    "sanitario",
+    "tapa registro",
+}
+
+_PLUMBING_STEEL_KEYWORDS = {
+    "compuerta",
+    "griferia",
+    "grifería",
+    "rejilla",
+    "rejillas",
+    "sifon",
+    "soporte",
+    "soportes",
+    "valvula",
+    "válvula",
+}
+
 _CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 _CONFIDENCE_BY_RANK = {value: key for key, value in _CONFIDENCE_RANK.items()}
 _SHADOW_SPAN_SAMPLE_LIMIT = 8
@@ -679,29 +714,79 @@ def _find_series_hint(values: list[str]) -> tuple[str | None, str | None]:
     joined = " ".join(normalized_values)
     tokens = set(_word_tokens(joined))
 
-    def _matches_hint(keyword: str) -> bool:
-        normalized_keyword = _normalize_text(keyword)
-        if not normalized_keyword:
-            return False
-        keyword_tokens = _word_tokens(normalized_keyword)
-        if not keyword_tokens:
-            return False
-        if len(keyword_tokens) == 1:
-            return keyword_tokens[0] in tokens
-        pattern = rf"\b{re.escape(normalized_keyword)}\b"
-        return re.search(pattern, joined) is not None
-
     for series_key, hints in _NAME_SERIES_HINTS.items():
         for hint_name, keywords in hints:
-            if any(_matches_hint(keyword) for keyword in keywords):
+            if any(_matches_hint(keyword, joined=joined, tokens=tokens) for keyword in keywords):
                 return series_key, hint_name
 
     for series_key, hints in _CATEGORY_SERIES_HINTS.items():
         for hint_name, keywords in hints:
-            if any(_matches_hint(keyword) for keyword in keywords):
+            if any(_matches_hint(keyword, joined=joined, tokens=tokens) for keyword in keywords):
                 return series_key, hint_name
 
     return None, None
+
+
+def _matches_hint(keyword: str, *, joined: str, tokens: set[str]) -> bool:
+    normalized_keyword = _normalize_text(keyword)
+    if not normalized_keyword:
+        return False
+    keyword_tokens = _word_tokens(normalized_keyword)
+    if not keyword_tokens:
+        return False
+    if len(keyword_tokens) == 1:
+        return keyword_tokens[0] in tokens
+    pattern = rf"\b{re.escape(normalized_keyword)}\b"
+    return re.search(pattern, joined) is not None
+
+
+def _plumbing_source_mapping(supply: dict[str, Any]) -> dict[str, Any] | None:
+    values = [
+        str(supply.get("canonical_name") or ""),
+        str(supply.get("display_name") or ""),
+        str(supply.get("canonical_category") or ""),
+    ]
+    normalized_values = [_normalize_text(value) for value in values if str(value or "").strip()]
+    joined = " ".join(normalized_values)
+    tokens = set(_word_tokens(joined))
+    category = _normalize_text(supply.get("canonical_category") or "")
+
+    plumbing_context = category in _PLUMBING_NETWORK_CATEGORIES or any(
+        _matches_hint(keyword, joined=joined, tokens=tokens) for keyword in _PLUMBING_NETWORK_KEYWORDS
+    )
+    if not plumbing_context:
+        return None
+
+    if any(_matches_hint(keyword, joined=joined, tokens=tokens) for keyword in _PLUMBING_STEEL_KEYWORDS):
+        return {
+            "mapping_status": "mapped",
+            "monitorability_status": "monitorable",
+            "mapping_strategy": "keyword_fallback",
+            "series_key": "steel",
+            "series_id": None,
+            "source_name": "shadow_keyword_mapping",
+            "source_url": None,
+            "confidence": "medium",
+            "rationale_summary": (
+                "Shadow supply matched market family `steel` via plumbing fixture fallback `plumbing_metal_fixture_keywords`."
+            ),
+            "mapping_hint": "plumbing_metal_fixture_keywords",
+        }
+
+    return {
+        "mapping_status": "unmapped",
+        "monitorability_status": "unresolved",
+        "mapping_strategy": "unmapped",
+        "series_key": None,
+        "series_id": None,
+        "source_name": None,
+        "source_url": None,
+        "confidence": "low",
+        "rationale_summary": (
+            "Shadow supply remains unmapped after configured-source lookup and plumbing-aware fallback."
+        ),
+        "mapping_hint": "plumbing_network_unmapped",
+    }
 
 
 def _configured_source_mapping(source_row: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -733,6 +818,10 @@ def _heuristic_source_mapping(supply: dict[str, Any]) -> dict[str, Any]:
         str(supply.get("display_name") or ""),
         str(supply.get("canonical_category") or ""),
     ]
+    plumbing_mapping = _plumbing_source_mapping(supply)
+    if plumbing_mapping:
+        return plumbing_mapping
+
     series_key = _infer_series_key(" ".join(name_parts))
     mapping_hint: str | None = "keyword_fallback" if series_key else None
     if not series_key:

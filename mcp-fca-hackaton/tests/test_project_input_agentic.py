@@ -255,26 +255,54 @@ class TestAgenticShadowQualification(unittest.TestCase):
             {
                 "canonical_name": 's/i red hidraulica cpvc ø3/4" rde-11',
                 "display_name": 'S/I red hidraulica CPVC Ø3/4" RDE-11',
-                "canonical_category": "material",
+                "canonical_category": "red suministro de agua potable",
             }
         )
 
         self.assertEqual(mapping["mapping_status"], "unmapped")
         self.assertEqual(mapping["mapping_strategy"], "unmapped")
         self.assertIsNone(mapping["series_key"])
+        self.assertIn("plumbing-aware fallback", mapping["rationale_summary"])
 
     def test_heuristic_source_mapping_does_not_match_puerta_inside_compuerta(self):
         mapping = _heuristic_source_mapping(
             {
                 "canonical_name": 's/i valvula de compuerta (posicion horizontal) ø3/4"',
                 "display_name": 'S/I Valvula de compuerta (posicion horizontal) Ø3/4"',
-                "canonical_category": "material",
+                "canonical_category": "red suministro de agua potable",
+            }
+        )
+
+        self.assertEqual(mapping["mapping_status"], "mapped")
+        self.assertEqual(mapping["mapping_strategy"], "keyword_fallback")
+        self.assertEqual(mapping["series_key"], "steel")
+        self.assertIn("plumbing fixture fallback", mapping["rationale_summary"])
+
+    def test_heuristic_source_mapping_leaves_plumbing_network_rows_unmapped(self):
+        mapping = _heuristic_source_mapping(
+            {
+                "canonical_name": 's/i punto sanitario pvc-s ø4" . piso 6',
+                "display_name": 'S/I punto sanitario PVC-S Ø4" . Piso 6',
+                "canonical_category": "red aguas residuales",
             }
         )
 
         self.assertEqual(mapping["mapping_status"], "unmapped")
         self.assertEqual(mapping["mapping_strategy"], "unmapped")
         self.assertIsNone(mapping["series_key"])
+
+    def test_heuristic_source_mapping_maps_plumbing_fixture_keywords_to_steel(self):
+        mapping = _heuristic_source_mapping(
+            {
+                "canonical_name": 'reubicacion sifon ø2", incluye rejilla',
+                "display_name": 'Reubicacion Sifon Ø2", incluye rejilla',
+                "canonical_category": "red aguas residuales",
+            }
+        )
+
+        self.assertEqual(mapping["mapping_status"], "mapped")
+        self.assertEqual(mapping["mapping_strategy"], "keyword_fallback")
+        self.assertEqual(mapping["series_key"], "steel")
 
     def test_heuristic_source_mapping_keeps_opening_keyword_match(self):
         mapping = _heuristic_source_mapping(
