@@ -216,7 +216,6 @@ _NAME_SERIES_HINTS: dict[str, list[tuple[str, set[str]]]] = {
                 "lamina rh",
                 "melamina",
                 "mdf",
-                "pvc",
             },
         ),
     ],
@@ -680,16 +679,26 @@ def _find_series_hint(values: list[str]) -> tuple[str | None, str | None]:
     joined = " ".join(normalized_values)
     tokens = set(_word_tokens(joined))
 
+    def _matches_hint(keyword: str) -> bool:
+        normalized_keyword = _normalize_text(keyword)
+        if not normalized_keyword:
+            return False
+        keyword_tokens = _word_tokens(normalized_keyword)
+        if not keyword_tokens:
+            return False
+        if len(keyword_tokens) == 1:
+            return keyword_tokens[0] in tokens
+        pattern = rf"\b{re.escape(normalized_keyword)}\b"
+        return re.search(pattern, joined) is not None
+
     for series_key, hints in _NAME_SERIES_HINTS.items():
         for hint_name, keywords in hints:
-            normalized_keywords = {_normalize_text(keyword) for keyword in keywords}
-            if tokens & normalized_keywords or any(keyword in joined for keyword in normalized_keywords):
+            if any(_matches_hint(keyword) for keyword in keywords):
                 return series_key, hint_name
 
     for series_key, hints in _CATEGORY_SERIES_HINTS.items():
         for hint_name, keywords in hints:
-            normalized_keywords = {_normalize_text(keyword) for keyword in keywords}
-            if any(keyword in joined for keyword in normalized_keywords):
+            if any(_matches_hint(keyword) for keyword in keywords):
                 return series_key, hint_name
 
     return None, None

@@ -10,6 +10,7 @@ from nexum_api.app import app, resolve_principal
 from nexum_api.auth import Principal
 from nexum_api.project_input_agentic import (
     _build_shadow_supply_artifacts,
+    _heuristic_source_mapping,
     _infer_judgment,
     _sample_candidate_records,
     _sample_judgment_records,
@@ -248,6 +249,45 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(mapping["series_key"], "cement")
         self.assertEqual(mapping["mapping_strategy"], "keyword_fallback")
         self.assertIn("category-aware fallback", mapping["rationale_summary"])
+
+    def test_heuristic_source_mapping_does_not_map_cpvc_to_lumber(self):
+        mapping = _heuristic_source_mapping(
+            {
+                "canonical_name": 's/i red hidraulica cpvc ø3/4" rde-11',
+                "display_name": 'S/I red hidraulica CPVC Ø3/4" RDE-11',
+                "canonical_category": "material",
+            }
+        )
+
+        self.assertEqual(mapping["mapping_status"], "unmapped")
+        self.assertEqual(mapping["mapping_strategy"], "unmapped")
+        self.assertIsNone(mapping["series_key"])
+
+    def test_heuristic_source_mapping_does_not_match_puerta_inside_compuerta(self):
+        mapping = _heuristic_source_mapping(
+            {
+                "canonical_name": 's/i valvula de compuerta (posicion horizontal) ø3/4"',
+                "display_name": 'S/I Valvula de compuerta (posicion horizontal) Ø3/4"',
+                "canonical_category": "material",
+            }
+        )
+
+        self.assertEqual(mapping["mapping_status"], "unmapped")
+        self.assertEqual(mapping["mapping_strategy"], "unmapped")
+        self.assertIsNone(mapping["series_key"])
+
+    def test_heuristic_source_mapping_keeps_opening_keyword_match(self):
+        mapping = _heuristic_source_mapping(
+            {
+                "canonical_name": "puerta entamborada mdf",
+                "display_name": "Puerta entamborada MDF",
+                "canonical_category": "material",
+            }
+        )
+
+        self.assertEqual(mapping["mapping_status"], "mapped")
+        self.assertEqual(mapping["mapping_strategy"], "keyword_fallback")
+        self.assertEqual(mapping["series_key"], "lumber")
 
 
 class TestAgenticShadowEndpoints(unittest.TestCase):

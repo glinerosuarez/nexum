@@ -69,6 +69,28 @@ Current execution point:
   - improve category-aware fallback routing into the currently supported market families
   - keep headings/scopes rejected upstream instead of inflating coverage with bad mappings
 
+### Progress Update: 2026-06-09 Benchmark Replay
+Step 2 was validated on a fresh live replay for:
+
+- `project.id = 612d46b3-853b-4936-82ad-d1fa6e205903`
+- `input_batch.id = 9bd75aa6-b41c-4d55-8f3b-256e56b92c8a`
+- successful Phoenix trace: `89d9064bf72192329a7adb12bd280fe2`
+- successful `agentic_run_id = 209c6155-36af-4c73-ac00-e54f8ce473c3`
+
+Observed benchmark improvement versus the earlier baseline run:
+1. `mapped_shadow_supply_count` improved from `5` to `38`.
+2. `unmapped_shadow_supply_count` dropped from `46` to `13`.
+
+Follow-up correction made after inspecting the Phoenix qualitative samples:
+1. category-aware fallback introduced some false positives in the `lumber` family
+2. plumbing rows with `CPVC` were incorrectly treated as openings/carpentry because `pvc` was included as a lumber keyword
+3. `compuerta` was incorrectly matching the `puerta` opening hint because the old matcher allowed raw substring hits
+
+Current mitigation:
+1. remove `pvc` from the `lumber` fallback hint family
+2. require exact token matches for single-word hints and bounded phrase matches for multi-word hints
+3. keep real opening matches such as `puerta ... MDF` valid
+
 ## Problem Statement
 Even though tracing is live, the current comparison story still has operational friction and quality gaps:
 
