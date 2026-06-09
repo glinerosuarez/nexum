@@ -106,6 +106,7 @@ _SERIES_KEYWORDS: dict[str, set[str]] = {
 
 _CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 _CONFIDENCE_BY_RANK = {value: key for key, value in _CONFIDENCE_RANK.items()}
+_SHADOW_SPAN_SAMPLE_LIMIT = 8
 
 
 class _ShadowExtractionSelection(BaseModel):
@@ -121,6 +122,141 @@ class _ShadowExtractionResult(BaseModel):
 def _json(value: Any, default: Any) -> str:
     payload = default if value is None else value
     return json.dumps(payload, default=str)
+
+
+def _truncate_text(value: Any, *, max_chars: int = 220) -> str:
+    text = _collapse_whitespace(value)
+    if len(text) <= max_chars:
+        return text
+    return f"{text[: max_chars - 3]}..."
+
+
+def _compact_source_ref(source_ref: Any) -> dict[str, Any]:
+    payload = dict(source_ref or {})
+    return {
+        "sheet_name": payload.get("sheet_name"),
+        "row_index": payload.get("row_index"),
+        "chunk_id": payload.get("chunk_id"),
+    }
+
+
+def _compact_evidence_refs(evidence_refs: Any, *, max_items: int = 3) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for item in list(evidence_refs or [])[:max_items]:
+        if not isinstance(item, dict):
+            continue
+        compact.append(
+            {
+                "type": item.get("type"),
+                "value": _truncate_text(item.get("value"), max_chars=140),
+            }
+        )
+    return compact
+
+
+def _sample_candidate_records(
+    candidates: list[dict[str, Any]],
+    *,
+    limit: int = _SHADOW_SPAN_SAMPLE_LIMIT,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for candidate in candidates[:limit]:
+        records.append(
+            {
+                "candidate_id": str(candidate.get("id") or candidate.get("shadow_candidate_id") or ""),
+                "candidate_origin": candidate.get("candidate_origin"),
+                "document_id": candidate.get("document_id"),
+                "source_type": candidate.get("source_type"),
+                "source_ref": _compact_source_ref(candidate.get("source_ref")),
+                "raw_name": _truncate_text(candidate.get("raw_name") or candidate.get("raw_text")),
+                "raw_unit": candidate.get("raw_unit"),
+                "raw_quantity": candidate.get("raw_quantity"),
+                "raw_total_price": candidate.get("raw_total_price"),
+                "section_labels": list(candidate.get("section_labels") or [])[:2],
+                "extraction_confidence": candidate.get("extraction_confidence"),
+                "extraction_notes": [_truncate_text(item, max_chars=140) for item in list(candidate.get("extraction_notes") or [])[:2]],
+                "deterministic_extracted_row_id": candidate.get("deterministic_extracted_row_id"),
+                "deterministic_normalized_supply_id": candidate.get("deterministic_normalized_supply_id"),
+            }
+        )
+    return records
+
+
+def _sample_judgment_records(
+    candidates_with_judgments: list[tuple[dict[str, Any], dict[str, Any]]],
+    *,
+    predicate,
+    limit: int = _SHADOW_SPAN_SAMPLE_LIMIT,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for candidate, judgment in candidates_with_judgments:
+        if not predicate(candidate, judgment):
+            continue
+        records.append(
+            {
+                "candidate_id": str(candidate.get("id") or ""),
+                "candidate_origin": candidate.get("candidate_origin"),
+                "raw_name": _truncate_text(candidate.get("raw_name") or candidate.get("raw_text")),
+                "source_ref": _compact_source_ref(candidate.get("source_ref")),
+                "judgment_label": judgment.get("judgment_label"),
+                "is_qualified": judgment.get("is_qualified"),
+                "is_market_monitorable": judgment.get("is_market_monitorable"),
+                "confidence": judgment.get("confidence"),
+                "rationale_summary": _truncate_text(judgment.get("rationale_summary")),
+                "evidence_refs": _compact_evidence_refs(judgment.get("evidence_refs")),
+            }
+        )
+        if len(records) >= limit:
+            break
+    return records
+
+
+def _sample_mapping_records(
+    supplies: list[dict[str, Any]],
+    mappings: list[dict[str, Any]],
+    *,
+    mapped_only: bool | None,
+    limit: int = _SHADOW_SPAN_SAMPLE_LIMIT,
+) -> list[dict[str, Any]]:
+    mapping_by_supply_id = {str(mapping.get("agentic_supply_id")): mapping for mapping in mappings}
+    records: list[dict[str, Any]] = []
+    for supply in supplies:
+        supply_id = str(supply.get("id") or "")
+        mapping = mapping_by_supply_id.get(supply_id) or {}
+        if mapped_only is True and mapping.get("mapping_status") != "mapped":
+            continue
+        if mapped_only is False and mapping.get("mapping_status") == "mapped":
+            continue
+        records.append(
+            {
+                "agentic_supply_id": supply_id,
+                "display_name": _truncate_text(supply.get("display_name") or supply.get("canonical_name")),
+                "canonical_name": _truncate_text(supply.get("canonical_name")),
+                "canonical_unit": supply.get("canonical_unit"),
+                "canonical_category": _truncate_text(supply.get("canonical_category"), max_chars=120),
+                "deterministic_normalized_supply_id": supply.get("deterministic_normalized_supply_id"),
+                "mapping_status": mapping.get("mapping_status"),
+                "monitorability_status": supply.get("monitorability_status"),
+                "series_key": mapping.get("series_key"),
+                "mapping_strategy": mapping.get("mapping_strategy"),
+                "confidence": mapping.get("confidence"),
+                "rationale_summary": _truncate_text(mapping.get("rationale_summary")),
+            }
+        )
+        if len(records) >= limit:
+            break
+    return records
+
+
+def _attach_span_json_samples(
+    span: Any,
+    samples: dict[str, list[dict[str, Any]]],
+) -> None:
+    attrs: dict[str, Any] = {}
+    for sample_name, sample_records in samples.items():
+        attrs[f"shadow.sample.{sample_name}.count"] = len(sample_records)
+        attrs[f"shadow.sample.{sample_name}_json"] = _json(sample_records, [])
+    set_span_attributes(span, attrs)
 
 
 def _to_decimal_or_none(value: Any) -> Decimal | None:
@@ -284,14 +420,16 @@ def _agentic_shadow_comparison_attrs(
     input_batch_id: str,
     project_id: str | None = None,
 ) -> dict[str, Any]:
+    payload_project_id = str(payload.get("project_id") or "").strip() or None
     return comparison_attributes(
         pipeline_variant=str(payload.get("pipeline_variant") or "agentic_shadow"),
-        project_id=project_id,
+        project_id=project_id or payload_project_id,
         input_batch_id=input_batch_id,
         benchmark_dataset=str(payload.get("benchmark_dataset") or "").strip() or None,
         benchmark_instance_id=(
             str(payload.get("benchmark_instance_id") or "").strip()
             or project_id
+            or payload_project_id
             or input_batch_id
         ),
         pipeline_version=str(payload.get("pipeline_version") or "").strip() or None,
@@ -676,6 +814,11 @@ def _extract_agentic_shadow_run_impl(
         "load_documents",
         kind="CHAIN",
         attributes={
+            **_agentic_shadow_comparison_attrs(
+                payload=payload,
+                input_batch_id=input_batch_id,
+                project_id=str(batch.get("project_id") or "") or None,
+            ),
             "shadow.input_batch_id": input_batch_id,
             "shadow.chunk_count": len(chunks),
             "shadow.document_count": len({str(chunk.get("document_id") or "").strip() for chunk in chunks}),
@@ -692,6 +835,11 @@ def _extract_agentic_shadow_run_impl(
         "extract_shadow_candidates",
         kind="CHAIN",
         attributes={
+            **_agentic_shadow_comparison_attrs(
+                payload=payload,
+                input_batch_id=input_batch_id,
+                project_id=str(batch.get("project_id") or "") or None,
+            ),
             "shadow.chunk_count": len(chunks),
             "shadow.model_name": str(payload.get("model_name") or _vertex_model()),
             "shadow.prompt_version": str(payload.get("prompt_version") or ""),
@@ -807,6 +955,19 @@ def _extract_agentic_shadow_run_impl(
                 ),
                 "shadow.agentic_only_candidate_count": int(
                     candidate_origin_counter.get("agentic_only_candidate", 0)
+                ),
+            },
+        )
+        _attach_span_json_samples(
+            extract_span,
+            {
+                "candidates": _sample_candidate_records(extracted_candidates),
+                "agentic_only_candidates": _sample_candidate_records(
+                    [
+                        candidate
+                        for candidate in extracted_candidates
+                        if candidate.get("candidate_origin") == "agentic_only_candidate"
+                    ]
                 ),
             },
         )
@@ -1082,6 +1243,23 @@ def _qualify_agentic_shadow_run_impl(
                     ),
                 },
             )
+            _attach_span_json_samples(
+                qualification_span,
+                {
+                    "qualified_candidates": _sample_judgment_records(
+                        candidates_with_judgments,
+                        predicate=lambda _candidate, judgment: bool(judgment.get("is_qualified")),
+                    ),
+                    "rejected_candidates": _sample_judgment_records(
+                        candidates_with_judgments,
+                        predicate=lambda _candidate, judgment: not bool(judgment.get("is_qualified")),
+                    ),
+                    "unresolved_candidates": _sample_judgment_records(
+                        candidates_with_judgments,
+                        predicate=lambda _candidate, judgment: judgment.get("judgment_label") == "unresolved",
+                    ),
+                },
+            )
             mark_span_ok(qualification_span)
 
         artifacts = _build_shadow_supply_artifacts(
@@ -1107,6 +1285,16 @@ def _qualify_agentic_shadow_run_impl(
                 ),
             },
         ) as normalization_span:
+            _attach_span_json_samples(
+                normalization_span,
+                {
+                    "shadow_supplies": _sample_mapping_records(
+                        artifacts["supplies"],
+                        artifacts["mappings"],
+                        mapped_only=None,
+                    ),
+                },
+            )
             cur.execute("delete from project_input_agentic_row_links where agentic_run_id = %s", (agentic_run_id,))
             cur.execute("delete from project_input_agentic_mappings where agentic_run_id = %s", (agentic_run_id,))
             cur.execute("delete from project_input_agentic_supplies where agentic_run_id = %s", (agentic_run_id,))
@@ -1179,6 +1367,21 @@ def _qualify_agentic_shadow_run_impl(
                         mapping["confidence"], mapping["rationale_summary"],
                     ),
                 )
+            _attach_span_json_samples(
+                mapping_span,
+                {
+                    "mapped_supplies": _sample_mapping_records(
+                        artifacts["supplies"],
+                        artifacts["mappings"],
+                        mapped_only=True,
+                    ),
+                    "unmapped_supplies": _sample_mapping_records(
+                        artifacts["supplies"],
+                        artifacts["mappings"],
+                        mapped_only=False,
+                    ),
+                },
+            )
             mark_span_ok(mapping_span)
 
         summary = {
@@ -1526,6 +1729,7 @@ def run_agentic_shadow_pipeline(
     trace_id: str | None = None
     final_result: dict[str, Any] | None = None
     qualification_payload = {
+        "project_id": payload.get("project_id"),
         "model_name": payload.get("qualification_model_name") or "shadow_qualification_heuristic_v1",
         "retrieval_strategy": payload.get("qualification_retrieval_strategy") or payload.get("retrieval_strategy"),
         "prompt_version": payload.get("qualification_prompt_version") or "heuristic_seed_v1",

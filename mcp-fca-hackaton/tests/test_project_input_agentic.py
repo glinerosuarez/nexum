@@ -8,7 +8,13 @@ from fastapi.testclient import TestClient
 
 from nexum_api.app import app, resolve_principal
 from nexum_api.auth import Principal
-from nexum_api.project_input_agentic import _build_shadow_supply_artifacts, _infer_judgment
+from nexum_api.project_input_agentic import (
+    _build_shadow_supply_artifacts,
+    _infer_judgment,
+    _sample_candidate_records,
+    _sample_judgment_records,
+    _sample_mapping_records,
+)
 
 
 class _DummyConn:
@@ -124,6 +130,54 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(supply["monitorability_status"], "monitorable")
         self.assertEqual(mapping["series_key"], "steel")
         self.assertEqual(artifacts["summary"]["shadow_supply_count"], 1)
+
+    def test_shadow_sampling_helpers_include_debug_fields(self):
+        candidate = {
+            "id": "candidate-1",
+            "shadow_candidate_id": "candidate-shadow-1",
+            "candidate_origin": "agentic_only_candidate",
+            "document_id": "doc-1",
+            "source_type": "xlsx",
+            "source_ref": {"sheet_name": "PRESUPUESTO OFICIAL", "row_index": 14},
+            "raw_text": "Acero corrugado #5 para refuerzo estructural en zonas principales del proyecto.",
+            "raw_name": "Acero corrugado #5",
+            "raw_unit": "kg",
+            "raw_quantity": 100,
+            "raw_total_price": 520000,
+            "section_labels": ["ESTRUCTURA"],
+            "extraction_confidence": "medium",
+            "extraction_notes": ["LLM extracted from raw document chunk."],
+            "deterministic_extracted_row_id": "row-1",
+            "deterministic_normalized_supply_id": "norm-1",
+            "raw_category": "Estructura",
+            "raw_unit_price": 5200,
+            "evidence_refs": [{"type": "row_text", "value": "Acero corrugado #5"}],
+        }
+        judgment = _infer_judgment(candidate)
+        artifacts = _build_shadow_supply_artifacts(
+            [(candidate, judgment)],
+            agentic_run_id="run-1",
+            input_batch_id="batch-1",
+            project_id="project-1",
+        )
+
+        candidate_samples = _sample_candidate_records([candidate])
+        judgment_samples = _sample_judgment_records(
+            [(candidate, judgment)],
+            predicate=lambda _candidate, _judgment: True,
+        )
+        mapping_samples = _sample_mapping_records(
+            artifacts["supplies"],
+            artifacts["mappings"],
+            mapped_only=True,
+        )
+
+        self.assertEqual(candidate_samples[0]["candidate_id"], "candidate-1")
+        self.assertEqual(candidate_samples[0]["candidate_origin"], "agentic_only_candidate")
+        self.assertEqual(judgment_samples[0]["judgment_label"], "qualified_supply")
+        self.assertIn("rationale_summary", judgment_samples[0])
+        self.assertEqual(mapping_samples[0]["series_key"], "steel")
+        self.assertEqual(mapping_samples[0]["agentic_supply_id"], artifacts["supplies"][0]["id"])
 
 
 class TestAgenticShadowEndpoints(unittest.TestCase):
@@ -256,6 +310,57 @@ class TestAgenticShadowEndpoints(unittest.TestCase):
         self.assertTrue(body["ok"])
         self.assertEqual(body["agentic_run_id"], "run-1")
         self.assertEqual(body["candidate_count"], 3)
+
+    def test_run_shadow_pipeline_route(self):
+        conn = _DummyConn()
+        with patch("nexum_api.app.get_conn", side_effect=lambda: _dummy_conn_ctx(conn)):
+            with patch("nexum_api.app._coerce_profile", return_value="profile-1"):
+                with patch(
+                    "nexum_api.app.run_agentic_shadow_pipeline",
+                    return_value={
+                        "agentic_run_id": "run-1",
+                        "input_batch_id": "batch-1",
+                        "project_id": "project-1",
+                        "candidate_count": 3,
+                        "qualified_supply_count": 2,
+                    },
+                ) as run_pipeline:
+                    response = self.client.post(
+                        "/project-input-batches/batch-1/agentic-shadow-runs/run",
+                        json={
+                            "project_id": "project-1",
+                            "pipeline_variant": "agentic_shadow",
+                            "chunks": [
+                                {
+                                    "chunk_id": "chunk-1",
+                                    "document_id": "doc-1",
+                                    "source_type": "xlsx",
+                                    "source_ref": {"sheet_name": "PRESUPUESTO OFICIAL"},
+                                    "headers": ["item", "descripcion", "und", "cantidad"],
+                                    "rows": [
+                                        {
+                                            "row_key": "sheet:14:abc",
+                                            "row_index": 14,
+                                            "raw_text": "Acero corrugado #5",
+                                            "raw_name": "Acero corrugado #5",
+                                            "raw_unit": "kg",
+                                            "raw_quantity": 10,
+                                        }
+                                    ],
+                                }
+                            ],
+                        },
+                    )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["agentic_run_id"], "run-1")
+        self.assertEqual(body["qualified_supply_count"], 2)
+        self.assertEqual(
+            run_pipeline.call_args.kwargs["payload"]["project_id"],
+            "project-1",
+        )
 
     def test_supply_selection_comparison_route(self):
         conn = _DummyConn()

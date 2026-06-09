@@ -979,6 +979,7 @@ class ProjectInputAgenticExtractionChunkRequest(BaseModel):
 
 
 class ProjectInputAgenticRunCreateRequest(BaseModel):
+    project_id: str | None = None
     pipeline_variant: str = "agentic_shadow"
     status: str = "running"
     model_name: str | None = None
@@ -989,6 +990,7 @@ class ProjectInputAgenticRunCreateRequest(BaseModel):
 
 
 class ProjectInputAgenticExtractionRequest(BaseModel):
+    project_id: str | None = None
     pipeline_variant: str = "agentic_shadow"
     status: str = "running"
     model_name: str | None = None
@@ -1003,6 +1005,7 @@ class ProjectInputAgenticExtractionRequest(BaseModel):
 
 
 class ProjectInputAgenticQualificationRequest(BaseModel):
+    project_id: str | None = None
     model_name: str | None = None
     retrieval_strategy: str | None = None
     prompt_version: str | None = None

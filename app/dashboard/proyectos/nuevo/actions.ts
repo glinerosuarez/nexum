@@ -102,6 +102,7 @@ export async function createProjectAction(
         }>(`/project-input-batches/${inputBatchId}/agentic-shadow-runs/run`, {
           method: "POST",
           body: {
+            project_id: response.project_id,
             pipeline_variant: "agentic_shadow",
             status: "running",
             model_name: "gemini-2.5-flash",
