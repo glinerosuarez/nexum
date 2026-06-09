@@ -130,6 +130,8 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(supply["market_mapping_status"], "mapped")
         self.assertEqual(supply["monitorability_status"], "monitorable")
         self.assertEqual(mapping["series_key"], "steel")
+        self.assertEqual(mapping["supply_class"], "valve")
+        self.assertEqual(supply["mapping_candidate"]["supply_class"], "valve")
         self.assertEqual(artifacts["summary"]["shadow_supply_count"], 1)
 
     def test_shadow_sampling_helpers_include_debug_fields(self):
@@ -178,6 +180,7 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(judgment_samples[0]["judgment_label"], "qualified_supply")
         self.assertIn("rationale_summary", judgment_samples[0])
         self.assertEqual(mapping_samples[0]["series_key"], "steel")
+        self.assertEqual(mapping_samples[0]["supply_class"], "valve")
         self.assertEqual(mapping_samples[0]["agentic_supply_id"], artifacts["supplies"][0]["id"])
 
     def test_build_shadow_supply_artifacts_prefers_configured_source(self):
@@ -247,6 +250,7 @@ class TestAgenticShadowQualification(unittest.TestCase):
         mapping = artifacts["mappings"][0]
         self.assertEqual(supply["market_mapping_status"], "mapped")
         self.assertEqual(mapping["series_key"], "cement")
+        self.assertEqual(mapping["supply_class"], "wall_finish")
         self.assertEqual(mapping["mapping_strategy"], "keyword_fallback")
         self.assertIn("category-aware fallback", mapping["rationale_summary"])
 
@@ -262,6 +266,7 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(mapping["mapping_status"], "unmapped")
         self.assertEqual(mapping["mapping_strategy"], "unmapped")
         self.assertIsNone(mapping["series_key"])
+        self.assertEqual(mapping["supply_class"], "pipe_network")
         self.assertIn("plumbing-aware fallback", mapping["rationale_summary"])
 
     def test_heuristic_source_mapping_does_not_match_puerta_inside_compuerta(self):
@@ -276,6 +281,7 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(mapping["mapping_status"], "mapped")
         self.assertEqual(mapping["mapping_strategy"], "keyword_fallback")
         self.assertEqual(mapping["series_key"], "steel")
+        self.assertEqual(mapping["supply_class"], "valve")
         self.assertIn("plumbing fixture fallback", mapping["rationale_summary"])
 
     def test_heuristic_source_mapping_leaves_plumbing_network_rows_unmapped(self):
@@ -290,6 +296,7 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(mapping["mapping_status"], "unmapped")
         self.assertEqual(mapping["mapping_strategy"], "unmapped")
         self.assertIsNone(mapping["series_key"])
+        self.assertEqual(mapping["supply_class"], "sanitary_point")
 
     def test_heuristic_source_mapping_maps_plumbing_fixture_keywords_to_steel(self):
         mapping = _heuristic_source_mapping(
@@ -303,6 +310,7 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(mapping["mapping_status"], "mapped")
         self.assertEqual(mapping["mapping_strategy"], "keyword_fallback")
         self.assertEqual(mapping["series_key"], "steel")
+        self.assertEqual(mapping["supply_class"], "siphon")
 
     def test_heuristic_source_mapping_keeps_opening_keyword_match(self):
         mapping = _heuristic_source_mapping(
@@ -316,6 +324,7 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(mapping["mapping_status"], "mapped")
         self.assertEqual(mapping["mapping_strategy"], "keyword_fallback")
         self.assertEqual(mapping["series_key"], "lumber")
+        self.assertEqual(mapping["supply_class"], "door")
 
 
 class TestAgenticShadowEndpoints(unittest.TestCase):

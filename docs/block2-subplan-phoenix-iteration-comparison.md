@@ -91,6 +91,18 @@ Current mitigation:
 2. require exact token matches for single-word hints and bounded phrase matches for multi-word hints
 3. keep real opening matches such as `puerta ... MDF` valid
 
+### Progress Update: 2026-06-09 Semantic Retrieval Readout
+Latest Phoenix replay on `nexum-api-00045-867` confirmed a more important product insight:
+
+1. the hackathon value is retrieval recall plus semantic supply identification
+2. coarse forecast-family fallback should stay secondary
+3. if a row is semantically identified as `valve`, `siphon`, or `pipe_network`, that signal is more useful than forcing an untrustworthy family forecast
+
+Current implementation direction:
+1. preserve `supply_class` in shadow outputs and Phoenix samples
+2. keep `series_key` separate as an optional downstream market-family mapping
+3. treat unresolved forecast mapping as an explicit gap instead of hiding it with coarse fallback inflation
+
 ## Problem Statement
 Even though tracing is live, the current comparison story still has operational friction and quality gaps:
 

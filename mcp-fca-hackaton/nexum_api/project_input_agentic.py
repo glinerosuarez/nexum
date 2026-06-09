@@ -256,6 +256,24 @@ _PLUMBING_STEEL_KEYWORDS = {
     "válvula",
 }
 
+_SUPPLY_CLASS_HINTS: list[tuple[str, set[str]]] = [
+    ("valve", {"valvula", "válvula", "compuerta", "registro"}),
+    ("siphon", {"sifon", "sifón"}),
+    ("grate", {"rejilla", "rejillas"}),
+    ("support", {"soporte", "soportes"}),
+    ("faucet", {"griferia", "grifería"}),
+    ("sanitary_point", {"punto sanitario"}),
+    ("hydraulic_point", {"punto hidraulico", "punto hidráulico"}),
+    ("pipe_network", {"red hidraulica", "red hidráulica", "red sanitaria", "red suministro", "pvc-s", "cpvc"}),
+    ("wall_finish", {"panete", "panetes", "enchape", "enchapes", "alistado"}),
+    ("tile_finish", {"piso", "pisos", "tablon", "tablón"}),
+    ("window", {"ventana", "ventanas"}),
+    ("door", {"puerta", "puertas"}),
+    ("handrail", {"pasamanos", "baranda", "barandas"}),
+    ("countertop", {"meson", "mesón", "mesones"}),
+    ("data_labeling", {"utp", "marquillado", "red de datos"}),
+]
+
 _CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 _CONFIDENCE_BY_RANK = {value: key for key, value in _CONFIDENCE_RANK.items()}
 _SHADOW_SPAN_SAMPLE_LIMIT = 8
@@ -389,6 +407,8 @@ def _sample_mapping_records(
                 "deterministic_normalized_supply_id": supply.get("deterministic_normalized_supply_id"),
                 "mapping_status": mapping.get("mapping_status"),
                 "monitorability_status": supply.get("monitorability_status"),
+                "supply_class": mapping.get("supply_class"),
+                "supply_class_confidence": mapping.get("supply_class_confidence"),
                 "series_key": mapping.get("series_key"),
                 "mapping_strategy": mapping.get("mapping_strategy"),
                 "confidence": mapping.get("confidence"),
@@ -740,6 +760,22 @@ def _matches_hint(keyword: str, *, joined: str, tokens: set[str]) -> bool:
     return re.search(pattern, joined) is not None
 
 
+def _infer_supply_class(supply: dict[str, Any]) -> tuple[str | None, str]:
+    values = [
+        str(supply.get("canonical_name") or ""),
+        str(supply.get("display_name") or ""),
+        str(supply.get("canonical_category") or ""),
+    ]
+    normalized_values = [_normalize_text(value) for value in values if str(value or "").strip()]
+    joined = " ".join(normalized_values)
+    tokens = set(_word_tokens(joined))
+    for supply_class, keywords in _SUPPLY_CLASS_HINTS:
+        if any(_matches_hint(keyword, joined=joined, tokens=tokens) for keyword in keywords):
+            confidence = "high" if supply_class in {"valve", "siphon", "grate", "sanitary_point", "hydraulic_point"} else "medium"
+            return supply_class, confidence
+    return None, "low"
+
+
 def _plumbing_source_mapping(supply: dict[str, Any]) -> dict[str, Any] | None:
     values = [
         str(supply.get("canonical_name") or ""),
@@ -758,10 +794,13 @@ def _plumbing_source_mapping(supply: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     if any(_matches_hint(keyword, joined=joined, tokens=tokens) for keyword in _PLUMBING_STEEL_KEYWORDS):
+        supply_class, supply_class_confidence = _infer_supply_class(supply)
         return {
             "mapping_status": "mapped",
             "monitorability_status": "monitorable",
             "mapping_strategy": "keyword_fallback",
+            "supply_class": supply_class,
+            "supply_class_confidence": supply_class_confidence,
             "series_key": "steel",
             "series_id": None,
             "source_name": "shadow_keyword_mapping",
@@ -777,6 +816,8 @@ def _plumbing_source_mapping(supply: dict[str, Any]) -> dict[str, Any] | None:
         "mapping_status": "unmapped",
         "monitorability_status": "unresolved",
         "mapping_strategy": "unmapped",
+        "supply_class": _infer_supply_class(supply)[0],
+        "supply_class_confidence": _infer_supply_class(supply)[1],
         "series_key": None,
         "series_id": None,
         "source_name": None,
@@ -796,10 +837,13 @@ def _configured_source_mapping(source_row: dict[str, Any] | None) -> dict[str, A
     series_key = str(parse_config.get("series_key") or "").strip() or None
     if not series_key:
         return None
+    supply_class, supply_class_confidence = _infer_supply_class({"canonical_name": source_row.get("source_name")})
     return {
         "mapping_status": "mapped",
         "monitorability_status": "monitorable",
         "mapping_strategy": "retrieval_catalog_match",
+        "supply_class": supply_class,
+        "supply_class_confidence": supply_class_confidence,
         "series_key": series_key,
         "series_id": str(parse_config.get("series_id") or "").strip() or None,
         "source_name": source_row.get("source_name"),
@@ -818,6 +862,7 @@ def _heuristic_source_mapping(supply: dict[str, Any]) -> dict[str, Any]:
         str(supply.get("display_name") or ""),
         str(supply.get("canonical_category") or ""),
     ]
+    supply_class, supply_class_confidence = _infer_supply_class(supply)
     plumbing_mapping = _plumbing_source_mapping(supply)
     if plumbing_mapping:
         return plumbing_mapping
@@ -841,6 +886,8 @@ def _heuristic_source_mapping(supply: dict[str, Any]) -> dict[str, Any]:
             "mapping_status": "mapped",
             "monitorability_status": "monitorable",
             "mapping_strategy": strategy,
+            "supply_class": supply_class,
+            "supply_class_confidence": supply_class_confidence,
             "series_key": series_key,
             "series_id": None,
             "source_name": "shadow_keyword_mapping",
@@ -854,6 +901,8 @@ def _heuristic_source_mapping(supply: dict[str, Any]) -> dict[str, Any]:
         "mapping_status": "unmapped",
         "monitorability_status": "monitorable" if has_material_signal else "unresolved",
         "mapping_strategy": "unmapped",
+        "supply_class": supply_class,
+        "supply_class_confidence": supply_class_confidence,
         "series_key": None,
         "series_id": None,
         "source_name": None,
@@ -961,6 +1010,7 @@ def _build_shadow_supply_artifacts(
     mappings: list[dict[str, Any]] = []
     mapping_status_counter: Counter[str] = Counter()
     monitorability_counter: Counter[str] = Counter()
+    supply_class_counter: Counter[str] = Counter()
 
     for supply in grouped.values():
         deterministic_supply_id = str(supply.get("deterministic_normalized_supply_id") or "").strip()
@@ -977,6 +1027,8 @@ def _build_shadow_supply_artifacts(
             "source_extracted_row_ids": sorted(supply["source_extracted_row_ids"]),
             "retrieval_evidence": supply["retrieval_evidence"][:6],
             "mapping_candidate": {
+                "supply_class": mapping_decision.get("supply_class"),
+                "supply_class_confidence": mapping_decision.get("supply_class_confidence"),
                 "series_key": mapping_decision["series_key"],
                 "mapping_strategy": mapping_decision["mapping_strategy"],
                 "mapping_hint": mapping_decision.get("mapping_hint"),
@@ -985,6 +1037,8 @@ def _build_shadow_supply_artifacts(
         supplies.append(supply_payload)
         mapping_status_counter[mapping_decision["mapping_status"]] += 1
         monitorability_counter[mapping_decision["monitorability_status"]] += 1
+        if mapping_decision.get("supply_class"):
+            supply_class_counter[str(mapping_decision["supply_class"])] += 1
 
         mappings.append(
             {
@@ -995,6 +1049,8 @@ def _build_shadow_supply_artifacts(
                 "agentic_supply_id": supply["id"],
                 "mapping_status": mapping_decision["mapping_status"],
                 "mapping_strategy": mapping_decision["mapping_strategy"],
+                "supply_class": mapping_decision.get("supply_class"),
+                "supply_class_confidence": mapping_decision.get("supply_class_confidence"),
                 "series_key": mapping_decision["series_key"],
                 "series_id": mapping_decision["series_id"],
                 "source_name": mapping_decision["source_name"],
@@ -1035,6 +1091,7 @@ def _build_shadow_supply_artifacts(
             "rejected_shadow_supply_count": int(mapping_status_counter.get("rejected", 0)),
             "monitorable_shadow_supply_count": int(monitorability_counter.get("monitorable", 0)),
             "unresolved_shadow_supply_count": int(monitorability_counter.get("unresolved", 0)),
+            "supply_class_counts": dict(supply_class_counter),
         },
     }
 
@@ -1677,6 +1734,8 @@ def _qualify_agentic_shadow_run_impl(
                 "shadow.mapped_shadow_supply_count": artifacts["summary"].get("mapped_shadow_supply_count", 0),
                 "shadow.unmapped_shadow_supply_count": artifacts["summary"].get("unmapped_shadow_supply_count", 0),
                 "shadow.monitorable_shadow_supply_count": artifacts["summary"].get("monitorable_shadow_supply_count", 0),
+                "shadow.classified_supply_count": sum(artifacts["summary"].get("supply_class_counts", {}).values()),
+                "shadow.supply_class_counts_json": _json(artifacts["summary"].get("supply_class_counts"), {}),
             },
         ) as mapping_span:
             for mapping in artifacts["mappings"]:
