@@ -2055,6 +2055,10 @@ def _run_agentic_shadow_pipeline_via_adk(
             project=_agent_builder_project_id(),
             location=_agent_builder_location(),
         )
+        os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "true"
+        if _agent_builder_project_id():
+            os.environ["GOOGLE_CLOUD_PROJECT"] = str(_agent_builder_project_id())
+        os.environ["GOOGLE_CLOUD_LOCATION"] = _agent_builder_location()
 
         state: dict[str, Any] = {"extract_result": None, "qualify_result": None}
 
