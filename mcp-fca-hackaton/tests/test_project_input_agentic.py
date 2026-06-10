@@ -340,6 +340,20 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(mapping["supply_class"], "paper_holder")
         self.assertEqual(mapping["supply_class_confidence"], "high")
 
+    def test_heuristic_source_mapping_classifies_bathroom_hook(self):
+        mapping = _heuristic_source_mapping(
+            {
+                "canonical_name": "ganchos metalicos evolution por habitacion",
+                "display_name": "S/I (2) ganchos metalicos evolution por habitacion",
+                "canonical_category": "aparatos sanitarios",
+            }
+        )
+
+        self.assertEqual(mapping["mapping_status"], "mapped")
+        self.assertEqual(mapping["series_key"], "steel")
+        self.assertEqual(mapping["supply_class"], "hook")
+        self.assertEqual(mapping["supply_class_confidence"], "high")
+
     def test_heuristic_source_mapping_classifies_lighting_control_sensor(self):
         mapping = _heuristic_source_mapping(
             {

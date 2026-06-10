@@ -143,6 +143,16 @@ Follow-up correction:
 1. add explicit `lighting_control` semantic classification
 2. keep the downstream family mapping coarse (`steel`) while improving the supply-level meaning shown in Phoenix
 
+Latest Phoenix-guided refinement after `nexum-api-00048-pj4`:
+
+1. one of the remaining sampled `supply_class = null` rows was `S/I (2) ganchos metálicos evolution por habitación...`
+2. it was still landing as `series_key = steel` without a semantic label
+
+Follow-up correction:
+
+1. add explicit `hook` semantic classification for bathroom accessory rows such as `gancho`, `colgador`, and `percha`
+2. keep those rows separately intelligible in Phoenix without pretending the downstream market model is more granular than it is
+
 ## Problem Statement
 Even though tracing is live, the current comparison story still has operational friction and quality gaps:
 
