@@ -214,7 +214,7 @@ export default async function ProjectDashboard({
               label={t.execDashboard.lastLoad}
               value={priceRisk.lastUpdateDate ? fmtDate(priceRisk.lastUpdateDate, t.locale) : "—"}
               hint={priceRisk.hasPriceUpdates
-                ? `Base afectada ${fmtCOPCompact(priceRisk.affectedBudget)}`
+                ? `${t.execDashboard.affectedBudget} ${fmtCOPCompact(priceRisk.affectedBudget)}`
                 : t.execDashboard.noBatchesLoaded}
               icon={TrendingUp}
             />
@@ -223,26 +223,26 @@ export default async function ProjectDashboard({
           <article className="overflow-hidden rounded-2xl border border-line bg-canvas-raised">
             <header className="flex items-center justify-between gap-3 border-b border-line px-5 py-4">
               <div>
-                <h3 className="font-display text-xl text-ink">Insumos con mayor impacto</h3>
+                <h3 className="font-display text-xl text-ink">{t.execDashboard.highestImpactSupplies}</h3>
                 <p className="mt-0.5 text-xs text-ink-soft">
-                  Proyección considerando cantidad planeada del APU.
+                  {t.execDashboard.projectionHint}
                 </p>
               </div>
             </header>
             {priceRisk.topImpacts.length === 0 ? (
               <p className="px-5 py-10 text-center text-sm text-ink-muted">
-                No hay alzas detectadas con impacto presupuestal.
+                {t.execDashboard.noHikesDetected}
               </p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[900px] text-left text-sm">
                   <thead>
                     <tr className="border-b border-line text-[11px] font-medium uppercase tracking-[0.12em] text-ink-soft">
-                      <th scope="col" className="px-5 py-3">Insumo</th>
-                      <th scope="col" className="px-5 py-3 text-right">Precio base</th>
-                      <th scope="col" className="px-5 py-3 text-right">Precio actual</th>
-                      <th scope="col" className="px-5 py-3 text-right">Variación</th>
-                      <th scope="col" className="px-5 py-3 text-right">Impacto</th>
+                      <th scope="col" className="px-5 py-3">{t.execDashboard.supply}</th>
+                      <th scope="col" className="px-5 py-3 text-right">{t.execDashboard.basePrice}</th>
+                      <th scope="col" className="px-5 py-3 text-right">{t.execDashboard.currentPrice}</th>
+                      <th scope="col" className="px-5 py-3 text-right">{t.execDashboard.variation}</th>
+                      <th scope="col" className="px-5 py-3 text-right">{t.execDashboard.impact}</th>
                     </tr>
                   </thead>
                   <tbody>

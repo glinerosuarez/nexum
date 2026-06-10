@@ -210,6 +210,7 @@ export const en = {
     withPriceChange: "with price change",
     lastLoad: "Last load",
     noBatchesLoaded: "No batches loaded yet",
+    affectedBudget: "Affected base",
     highestImpactSupplies: "Supplies with highest impact",
     projectionHint: "Projection considering planned APU quantity.",
     noHikesDetected: "No price hikes detected with budget impact.",

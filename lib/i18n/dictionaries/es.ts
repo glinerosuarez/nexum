@@ -212,6 +212,7 @@ export const es: Dictionary = {
     withPriceChange: "con cambio de precio",
     lastLoad: "Última carga",
     noBatchesLoaded: "Aún no hay lotes cargados",
+    affectedBudget: "Base afectada",
     highestImpactSupplies: "Insumos con mayor impacto",
     projectionHint: "Proyección considerando cantidad planeada del APU.",
     noHikesDetected: "No hay alzas detectadas con impacto presupuestal.",
