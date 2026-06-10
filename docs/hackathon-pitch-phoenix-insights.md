@@ -64,6 +64,17 @@ Examples of `supply_class` candidates now supported in the shadow mapping logic:
 - `tile_finish`
 - `data_labeling`
 
+Latest Phoenix-guided refinement:
+
+1. bathroom accessory rows that were previously surfacing as `series_key = steel` with `supply_class = null`
+2. are now being explicitly classified as semantic supply types such as:
+  - `grab_bar`
+  - `paper_holder`
+  - `soap_dish`
+  - `towel_bar`
+
+This matters because it sharpens the retrieval story without pretending those items suddenly have a richer forecast model behind them.
+
 ## Why This Strengthens The Hackathon Story
 This creates a better demo narrative than pretending every recognized supply already has a useful market forecast:
 
@@ -71,6 +82,12 @@ This creates a better demo narrative than pretending every recognized supply alr
 2. Nexum can explain what kind of supply each item is.
 3. Nexum can show where the current market-intelligence layer is still too coarse.
 4. Phoenix gives us the iteration loop to prove that the system is getting more truthful, not only more populated.
+
+Recent concrete example:
+
+1. Phoenix exposed bathroom/metal accessories like `Barra de seguridad...` and `Portarollo metálico...` as still semantically under-classified.
+2. We used that trace evidence to add explicit semantic classes instead of broadening a coarse fallback bucket.
+3. The result is a more judge-friendly demonstration of progress: the system is learning finer-grained supply meaning, not only pushing more rows into a generic market family.
 
 ## Judge-Friendly Framing
 If asked why some items remain unresolved, the right answer is:

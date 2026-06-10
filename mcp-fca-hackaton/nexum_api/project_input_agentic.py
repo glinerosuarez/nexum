@@ -244,14 +244,20 @@ _PLUMBING_NETWORK_KEYWORDS = {
 }
 
 _PLUMBING_STEEL_KEYWORDS = {
+    "barra abatible",
+    "barra de seguridad",
     "compuerta",
     "griferia",
     "grifería",
+    "jabonera",
+    "porta rollo",
+    "portarollo",
     "rejilla",
     "rejillas",
     "sifon",
     "soporte",
     "soportes",
+    "toallero",
     "valvula",
     "válvula",
 }
@@ -260,6 +266,10 @@ _SUPPLY_CLASS_HINTS: list[tuple[str, set[str]]] = [
     ("valve", {"valvula", "válvula", "compuerta", "registro"}),
     ("siphon", {"sifon", "sifón"}),
     ("grate", {"rejilla", "rejillas"}),
+    ("grab_bar", {"barra de seguridad", "barra abatible"}),
+    ("paper_holder", {"portarollo", "porta rollo"}),
+    ("soap_dish", {"jabonera", "jaboneras"}),
+    ("towel_bar", {"toallero", "toalleros"}),
     ("support", {"soporte", "soportes"}),
     ("faucet", {"griferia", "grifería"}),
     ("sanitary_point", {"punto sanitario"}),
@@ -771,7 +781,22 @@ def _infer_supply_class(supply: dict[str, Any]) -> tuple[str | None, str]:
     tokens = set(_word_tokens(joined))
     for supply_class, keywords in _SUPPLY_CLASS_HINTS:
         if any(_matches_hint(keyword, joined=joined, tokens=tokens) for keyword in keywords):
-            confidence = "high" if supply_class in {"valve", "siphon", "grate", "sanitary_point", "hydraulic_point"} else "medium"
+            confidence = (
+                "high"
+                if supply_class
+                in {
+                    "valve",
+                    "siphon",
+                    "grate",
+                    "grab_bar",
+                    "paper_holder",
+                    "soap_dish",
+                    "towel_bar",
+                    "sanitary_point",
+                    "hydraulic_point",
+                }
+                else "medium"
+            )
             return supply_class, confidence
     return None, "low"
 

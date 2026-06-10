@@ -103,6 +103,35 @@ Current implementation direction:
 2. keep `series_key` separate as an optional downstream market-family mapping
 3. treat unresolved forecast mapping as an explicit gap instead of hiding it with coarse fallback inflation
 
+### Progress Update: 2026-06-09 Semantic Gap Closure
+Latest Phoenix replay on `nexum-api-00046-n4c` for:
+
+- `project.id = 5e07d6ed-ac68-4587-a84a-692ba791071b`
+- `agentic_shadow` trace: `c552417db7cb22dc9bcb420be00eed37`
+
+confirmed that the semantic layer is now live in sampled shadow mappings:
+
+1. `mapped_shadow_supply_count = 40`
+2. `unmapped_shadow_supply_count = 11`
+3. sampled mapped and unmapped payloads now show `supply_class` alongside `series_key`
+
+Phoenix also exposed the next semantic precision gap:
+
+1. some bathroom/metal accessory rows were still reaching Phoenix as mapped supplies with `supply_class = null`
+2. representative examples included `Barra de seguridad...` and `Portarollo metálico...`
+
+Follow-up refinement made after that trace review:
+
+1. add explicit semantic classes for bathroom accessory fixtures:
+  - `grab_bar`
+  - `paper_holder`
+  - `soap_dish`
+  - `towel_bar`
+2. keep those items independently classifiable even when their downstream fallback family remains coarse
+3. preserve the Phoenix comparison story:
+  - retrieval meaning gets sharper
+  - forecast-family coarseness stays visible instead of being hidden
+
 ## Problem Statement
 Even though tracing is live, the current comparison story still has operational friction and quality gaps:
 

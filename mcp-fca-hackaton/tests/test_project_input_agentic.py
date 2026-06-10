@@ -312,6 +312,34 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(mapping["series_key"], "steel")
         self.assertEqual(mapping["supply_class"], "siphon")
 
+    def test_heuristic_source_mapping_classifies_bathroom_grab_bar(self):
+        mapping = _heuristic_source_mapping(
+            {
+                "canonical_name": "barra de seguridad en acero inoxidable",
+                "display_name": "Barra de seguridad en acero inoxidable",
+                "canonical_category": "aparatos sanitarios",
+            }
+        )
+
+        self.assertEqual(mapping["mapping_status"], "mapped")
+        self.assertEqual(mapping["series_key"], "steel")
+        self.assertEqual(mapping["supply_class"], "grab_bar")
+        self.assertEqual(mapping["supply_class_confidence"], "high")
+
+    def test_heuristic_source_mapping_classifies_bathroom_paper_holder(self):
+        mapping = _heuristic_source_mapping(
+            {
+                "canonical_name": "portarollo metalico satin",
+                "display_name": "Portarollo metalico satin",
+                "canonical_category": "aparatos sanitarios",
+            }
+        )
+
+        self.assertEqual(mapping["mapping_status"], "mapped")
+        self.assertEqual(mapping["series_key"], "steel")
+        self.assertEqual(mapping["supply_class"], "paper_holder")
+        self.assertEqual(mapping["supply_class_confidence"], "high")
+
     def test_heuristic_source_mapping_keeps_opening_keyword_match(self):
         mapping = _heuristic_source_mapping(
             {
