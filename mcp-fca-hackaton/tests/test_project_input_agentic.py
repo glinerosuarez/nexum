@@ -408,6 +408,24 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(mapping["supply_class"], "electrical_feeder")
         self.assertEqual(mapping["supply_class_confidence"], "high")
 
+    def test_heuristic_source_mapping_keeps_grab_bar_over_wall_context(self):
+        mapping = _heuristic_source_mapping(
+            {
+                "canonical_name": (
+                    "s/i barra de seguridad 18 pulgadas en a.inox acabado satinado para instalar a muro"
+                ),
+                "display_name": (
+                    "S/I Barra de seguridad 18 pulgadas en A.inox acabado satinado, para instalar a muro"
+                ),
+                "canonical_category": "elementos arquitectonicos",
+            }
+        )
+
+        self.assertEqual(mapping["mapping_status"], "mapped")
+        self.assertEqual(mapping["series_key"], "steel")
+        self.assertEqual(mapping["supply_class"], "grab_bar")
+        self.assertEqual(mapping["supply_class_confidence"], "high")
+
     def test_heuristic_source_mapping_classifies_masonry_wall(self):
         mapping = _heuristic_source_mapping(
             {

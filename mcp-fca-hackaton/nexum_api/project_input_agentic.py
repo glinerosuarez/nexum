@@ -785,6 +785,40 @@ def _infer_supply_class(supply: dict[str, Any]) -> tuple[str | None, str]:
     normalized_values = [_normalize_text(value) for value in values if str(value or "").strip()]
     joined = " ".join(normalized_values)
     tokens = set(_word_tokens(joined))
+    category = _normalize_text(supply.get("canonical_category") or "")
+
+    def _has_any(keywords: set[str]) -> bool:
+        return any(_matches_hint(keyword, joined=joined, tokens=tokens) for keyword in keywords)
+
+    if _has_any({"lighting_control"}) or _has_any({"control de iluminacion", "control de iluminación", "sensor 360", "sensor de techo"}):
+        return "lighting_control", "high"
+
+    electrical_context = category in {"tableros", "instalaciones electricas", "instalaciones eléctricas"}
+    if electrical_context and _has_any(
+        {"cableado", "awg", "tableros de distribucion", "tableros de distribución", "ducto pvc", "ducto"}
+    ):
+        return "electrical_feeder", "high"
+
+    if _has_any({"barra de seguridad", "barra abatible"}):
+        return "grab_bar", "high"
+    if _has_any({"gancho", "ganchos", "colgador", "colgadores", "percha", "perchas"}):
+        return "hook", "high"
+    if _has_any({"portarollo", "porta rollo"}):
+        return "paper_holder", "high"
+    if _has_any({"jabonera", "jaboneras"}):
+        return "soap_dish", "high"
+    if _has_any({"toallero", "toalleros"}):
+        return "towel_bar", "high"
+
+    if _has_any({"ventana", "ventanas"}) or category == "ventanas":
+        return "window", "medium"
+
+    masonry_context = _has_any({"mamposteria", "mampostería", "bloque", "bloques"}) or (
+        category == "tipos de muros" and _has_any({"muro", "muros"})
+    )
+    if masonry_context:
+        return "masonry_wall", "medium"
+
     for supply_class, keywords in _SUPPLY_CLASS_HINTS:
         if any(_matches_hint(keyword, joined=joined, tokens=tokens) for keyword in keywords):
             confidence = (
