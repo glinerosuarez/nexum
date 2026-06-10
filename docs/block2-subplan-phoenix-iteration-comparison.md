@@ -163,6 +163,17 @@ Follow-up correction:
 1. add explicit `masonry_wall` semantic classification for rows such as `muro`, `mampostería`, and `bloque`
 2. keep structural wall rows distinguishable from finish rows like `wall_finish` in Phoenix
 
+Latest Phoenix-guided refinement after `nexum-api-00050-xtw`:
+
+1. a sampled window row `Ventana en PVC Blanco con Rejillas...` was surfacing as `grate`
+2. a sampled electrical partial/cableado row from `tableros` was surfacing as `tile_finish` because of `piso 5`
+
+Follow-up correction:
+
+1. make `window` win over incidental `rejilla` keywords on window rows
+2. add explicit `electrical_feeder` semantic classification for cableado/awg/ducto/tableros partial rows
+3. narrow `tile_finish` so floor numbering like `piso 5` does not hijack electrical rows
+
 ## Problem Statement
 Even though tracing is live, the current comparison story still has operational friction and quality gaps:
 

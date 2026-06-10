@@ -97,6 +97,8 @@ Recent concrete example:
 3. the follow-up improvement was to preserve that row as `supply_class = hook`, which is the kind of iteration story we want in the pitch.
 4. the next Phoenix replay then surfaced a different class of gap: structural wall rows like `muro en mampostería...` were still only visible as `cement` without a semantic wall label.
 5. the follow-up improvement was to preserve those as `supply_class = masonry_wall`, which keeps structure distinct from finish work in the demo story.
+6. the latest Phoenix replay then exposed semantic collisions, not missing classes: a window row was being labeled as `grate`, and an electrical feeder row was being labeled as `tile_finish`.
+7. the follow-up improvement was to fix the precedence so contextual classes like `window` and `electrical_feeder` beat incidental keyword hits.
 2. We used that trace evidence to add explicit semantic classes instead of broadening a coarse fallback bucket.
 3. The result is a more judge-friendly demonstration of progress: the system is learning finer-grained supply meaning, not only pushing more rows into a generic market family.
 

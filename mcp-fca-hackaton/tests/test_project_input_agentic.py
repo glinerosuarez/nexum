@@ -374,6 +374,40 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(mapping["supply_class"], "lighting_control")
         self.assertEqual(mapping["supply_class_confidence"], "high")
 
+    def test_heuristic_source_mapping_prefers_window_over_grate_for_window_rows(self):
+        mapping = _heuristic_source_mapping(
+            {
+                "canonical_name": "v-02 s/i ventana en pvc blanco con rejillas",
+                "display_name": "V-02 S/I Ventana en PVC Blanco con Rejillas",
+                "canonical_category": "ventanas",
+            }
+        )
+
+        self.assertEqual(mapping["mapping_status"], "mapped")
+        self.assertEqual(mapping["series_key"], "steel")
+        self.assertEqual(mapping["supply_class"], "window")
+        self.assertEqual(mapping["supply_class_confidence"], "medium")
+
+    def test_heuristic_source_mapping_classifies_electrical_feeder_not_tile_finish(self):
+        mapping = _heuristic_source_mapping(
+            {
+                "canonical_name": (
+                    's/i parcial desde tableros de distribucion de piso 5 hasta tableros '
+                    'de habitaciones incluye cableado 2x8f+2x8n+2x10t awg cu hffr ducto pvc 1"'
+                ),
+                "display_name": (
+                    'S/I parcial desde tableros de distribucion de piso 5 hasta tableros '
+                    'de habitaciones. Incluye Cableado 2x8F+2x8N+2x10T AWG CU HFFR, ducto PVC 1"'
+                ),
+                "canonical_category": "tableros",
+            }
+        )
+
+        self.assertEqual(mapping["mapping_status"], "mapped")
+        self.assertEqual(mapping["series_key"], "steel")
+        self.assertEqual(mapping["supply_class"], "electrical_feeder")
+        self.assertEqual(mapping["supply_class_confidence"], "high")
+
     def test_heuristic_source_mapping_classifies_masonry_wall(self):
         mapping = _heuristic_source_mapping(
             {
