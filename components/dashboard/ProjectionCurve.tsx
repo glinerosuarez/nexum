@@ -1,22 +1,25 @@
+"use client";
+
 import type { CurveData } from "@/lib/curve";
 import { fmtCOPCompact, fmtDate, fmtNumber } from "@/lib/format";
+import { useTranslation } from "@/lib/i18n/client";
 
 interface ProjectionCurveProps {
   data: CurveData | null;
 }
 
 export function ProjectionCurve({ data }: ProjectionCurveProps) {
+  const t = useTranslation();
   if (!data || data.points.length < 2) {
     return (
       <section className="rounded-2xl border border-line bg-canvas-raised">
         <header className="border-b border-line px-5 py-4">
           <h2 className="font-display text-xl text-ink">
-            Curva de proyección · CPTP / CPTR
+            {t.execDashboard.projectionCurveTitle}
           </h2>
         </header>
         <div className="px-5 py-12 text-center text-sm text-ink-muted">
-          Aún no hay datos suficientes para construir la curva. Carga un
-          cronograma con fechas por fase para ver el presupuesto en el tiempo.
+          {t.execDashboard.projectionNotEnoughData}
         </div>
       </section>
     );
@@ -38,8 +41,8 @@ export function ProjectionCurve({ data }: ProjectionCurveProps) {
   const maxDate = new Date(points[points.length - 1].fecha).getTime();
 
   const x = (iso: string) => {
-    const t = new Date(iso).getTime();
-    const ratio = (t - minDate) / Math.max(1, maxDate - minDate);
+    const time = new Date(iso).getTime();
+    const ratio = (time - minDate) / Math.max(1, maxDate - minDate);
     return padding.left + ratio * innerW;
   };
   const y = (value: number) => {
@@ -70,21 +73,21 @@ export function ProjectionCurve({ data }: ProjectionCurveProps) {
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-4">
         <div>
           <h2 className="font-display text-xl text-ink">
-            Curva de proyección · CPTP / CPTR
+            {t.execDashboard.projectionCurveTitle}
           </h2>
           <p className="mt-0.5 text-xs text-ink-soft">
-            Presupuesto distribuido en el tiempo entre {fmtDate(fecha_inicio)} y {fmtDate(fecha_fin)}.
+            {t.execDashboard.projectionCurveSubtitle(fmtDate(fecha_inicio, t.locale), fmtDate(fecha_fin, t.locale))}
           </p>
         </div>
         <dl className="grid grid-cols-3 gap-x-6 text-right text-xs">
           <div>
-            <dt className="text-ink-soft">CPTP a hoy</dt>
+            <dt className="text-ink-soft">{t.execDashboard.cptpToDate}</dt>
             <dd className="mt-0.5 font-mono text-sm text-ink">
               {fmtCOPCompact(valueAt(points, hoy, "cptp"))}
             </dd>
           </div>
           <div>
-            <dt className="text-ink-soft">CPTR (EV)</dt>
+            <dt className="text-ink-soft">{t.execDashboard.cptrEv}</dt>
             <dd className="mt-0.5 font-mono text-sm text-ink">
               {fmtCOPCompact(ev_total)}
             </dd>

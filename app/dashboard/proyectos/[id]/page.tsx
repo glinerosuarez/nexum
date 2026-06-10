@@ -83,7 +83,6 @@ export default async function ProjectDashboard({
               projectId={project.id}
               projectName={project.nombre}
               variant="danger"
-              t={t}
             />
           </div>
         ) : null}
@@ -287,11 +286,11 @@ export default async function ProjectDashboard({
               </div>
             )}
           </article>
-        </section>
+          </section>
 
-        <ProjectionCurve data={curva} />
+          <ProjectionCurve data={curva} />
 
-        <div className="grid gap-6 lg:grid-cols-12">
+          <div className="grid gap-6 lg:grid-cols-12">
           <section
             aria-labelledby="alertas-criticas"
             className="rounded-2xl border border-line bg-canvas-raised lg:col-span-7"
