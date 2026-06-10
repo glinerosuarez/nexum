@@ -153,6 +153,16 @@ Follow-up correction:
 1. add explicit `hook` semantic classification for bathroom accessory rows such as `gancho`, `colgador`, and `percha`
 2. keep those rows separately intelligible in Phoenix without pretending the downstream market model is more granular than it is
 
+Latest Phoenix-guided refinement after `nexum-api-00049-2fw`:
+
+1. one of the remaining sampled `supply_class = null` rows was `S/I Muro en mampostería (Bloque 15 cm)...`
+2. it was already mapping into `series_key = cement`, but without a semantic wall/masonry label
+
+Follow-up correction:
+
+1. add explicit `masonry_wall` semantic classification for rows such as `muro`, `mampostería`, and `bloque`
+2. keep structural wall rows distinguishable from finish rows like `wall_finish` in Phoenix
+
 ## Problem Statement
 Even though tracing is live, the current comparison story still has operational friction and quality gaps:
 

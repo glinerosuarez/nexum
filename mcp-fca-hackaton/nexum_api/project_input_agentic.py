@@ -269,6 +269,7 @@ _SUPPLY_CLASS_HINTS: list[tuple[str, set[str]]] = [
     ("siphon", {"sifon", "sifón"}),
     ("grate", {"rejilla", "rejillas"}),
     ("lighting_control", {"control de iluminacion", "control de iluminación", "sensor 360", "sensor de techo"}),
+    ("masonry_wall", {"muro", "muros", "mamposteria", "mampostería", "bloque", "bloques"}),
     ("grab_bar", {"barra de seguridad", "barra abatible"}),
     ("hook", {"gancho", "ganchos", "colgador", "colgadores", "percha", "perchas"}),
     ("paper_holder", {"portarollo", "porta rollo"}),

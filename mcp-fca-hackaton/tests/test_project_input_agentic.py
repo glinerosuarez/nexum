@@ -374,6 +374,20 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(mapping["supply_class"], "lighting_control")
         self.assertEqual(mapping["supply_class_confidence"], "high")
 
+    def test_heuristic_source_mapping_classifies_masonry_wall(self):
+        mapping = _heuristic_source_mapping(
+            {
+                "canonical_name": "s/i muro en mamposteria bloque 15 cm",
+                "display_name": "S/I Muro en mamposteria (Bloque 15 cm)",
+                "canonical_category": "tipos de muros",
+            }
+        )
+
+        self.assertEqual(mapping["mapping_status"], "mapped")
+        self.assertEqual(mapping["series_key"], "cement")
+        self.assertEqual(mapping["supply_class"], "masonry_wall")
+        self.assertEqual(mapping["supply_class_confidence"], "medium")
+
     def test_heuristic_source_mapping_keeps_opening_keyword_match(self):
         mapping = _heuristic_source_mapping(
             {
