@@ -9,13 +9,12 @@ from fastapi.testclient import TestClient
 from nexum_api.app import app, resolve_principal
 from nexum_api.auth import Principal
 from nexum_api.project_input_agentic import (
-    _build_agent_builder_prompt,
+    _build_adk_orchestration_prompt,
     _build_shadow_supply_artifacts,
     _collect_text_fragments,
     _heuristic_source_mapping,
     _infer_judgment,
-    _parse_agent_builder_json,
-    _run_agent_builder_assist,
+    _parse_embedded_json,
     _sample_candidate_records,
     _sample_judgment_records,
     _sample_mapping_records,
@@ -138,39 +137,22 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(supply["mapping_candidate"]["supply_class"], "valve")
         self.assertEqual(artifacts["summary"]["shadow_supply_count"], 1)
 
-    def test_agent_builder_prompt_includes_compact_supply_payload(self):
-        prompt = _build_agent_builder_prompt(
+    def test_adk_orchestration_prompt_mentions_workflow(self):
+        prompt = _build_adk_orchestration_prompt(
             input_batch_id="batch-1",
             project_id="project-1",
-            supplies=[
-                {
-                    "id": "supply-1",
-                    "display_name": "Barra de seguridad acero inoxidable",
-                    "canonical_name": "barra de seguridad",
-                    "canonical_category": "Aparatos sanitarios",
-                    "monitorability_status": "monitorable",
-                    "market_mapping_status": "mapped",
-                }
-            ],
-            mappings=[
-                {
-                    "agentic_supply_id": "supply-1",
-                    "supply_class": "grab_bar",
-                    "series_key": "steel",
-                }
-            ],
         )
 
-        self.assertIn("Google Cloud Vertex AI Agent Builder", prompt)
+        self.assertIn("Google Cloud Vertex AI Agent Builder ADK", prompt)
         self.assertIn('"input_batch_id": "batch-1"', prompt)
-        self.assertIn('"supply_class": "grab_bar"', prompt)
+        self.assertIn("run_shadow_pipeline_tool", prompt)
 
-    def test_agent_builder_json_parser_extracts_embedded_object(self):
-        parsed = _parse_agent_builder_json(
-            'prefix {"summary":"ok","focus_supply_classes":["grab_bar"],"focus_supply_names":["Barra de seguridad"]} suffix'
+    def test_embedded_json_parser_extracts_embedded_object(self):
+        parsed = _parse_embedded_json(
+            'prefix {"status":"completed","agentic_run_id":"run-1","candidate_count":3} suffix'
         )
-        self.assertEqual(parsed["summary"], "ok")
-        self.assertEqual(parsed["focus_supply_classes"], ["grab_bar"])
+        self.assertEqual(parsed["status"], "completed")
+        self.assertEqual(parsed["agentic_run_id"], "run-1")
 
     def test_collect_text_fragments_walks_nested_event_shapes(self):
         fragments = _collect_text_fragments(
@@ -181,18 +163,6 @@ class TestAgenticShadowQualification(unittest.TestCase):
         )
         self.assertIn("first answer", fragments)
         self.assertIn("second answer", fragments)
-
-    def test_agent_builder_assist_returns_disabled_when_env_off(self):
-        with patch.dict("os.environ", {}, clear=False):
-            result = _run_agent_builder_assist(
-                input_batch_id="batch-1",
-                project_id="project-1",
-                supplies=[],
-                mappings=[],
-            )
-
-        self.assertEqual(result["status"], "disabled")
-        self.assertEqual(result["backend"], "vertex_ai_agent_builder_adk")
 
     def test_shadow_sampling_helpers_include_debug_fields(self):
         candidate = {

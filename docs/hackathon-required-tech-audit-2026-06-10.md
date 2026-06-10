@@ -2,130 +2,63 @@
 
 Date: 2026-06-10
 
-## Verdict
+## Current Position
 
-Current repo evidence supports:
+The repo is pivoting away from a mixed framework story.
 
-1. `Gemini`: yes
-2. `Google Cloud runtime`: yes
-3. `Partner MCP server`: yes
-4. `Arize/Phoenix partner story`: yes
-5. `Google Cloud Agent Builder`: **not yet proven in this repo**
+The intended judge-facing architecture is now:
 
-That last item is the current submission-compliance risk.
+`Nexum web -> nexum-api -> Google ADK supply agent -> MCP/data tools -> Phoenix`
 
-## What The Repo Clearly Proves
+This is the right correction because Phoenix instrumentation and the demo narrative revolve around the supply extraction workflow, not the older generic LangGraph chat orchestrator.
 
-### 1. Gemini is called at runtime
+## Why The Previous State Was Weak
 
-The repo contains direct runtime calls to Vertex-backed Gemini models:
+Before this pivot, the repo clearly proved:
 
-- [agent.py](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/mcp-fca-hackaton/domain/agent/agent.py:351)
-  - `create_vertex_agent()` imports `ChatVertexAI`
-  - builds a Vertex-backed ReAct agent
-- [agent.py](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/mcp-fca-hackaton/domain/agent/agent.py:356)
-  - runtime model instantiation uses `ChatVertexAI(...)`
-- [project_input_agentic.py](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/mcp-fca-hackaton/nexum_api/project_input_agentic.py:688)
-  - extraction path imports `ChatVertexAI`
-- [project_input_agentic.py](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/mcp-fca-hackaton/nexum_api/project_input_agentic.py:690)
-  - live shadow extraction invokes the Vertex model
+1. Gemini runtime usage
+2. Google Cloud runtime usage
+3. MCP runtime usage
+4. Phoenix / Arize observability
 
-Dependency evidence:
+But it did not prove that the actual supply workflow was engineered on Google Agent Platform. That left too much room for judges to conclude:
 
-- [pyproject.toml](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/mcp-fca-hackaton/pyproject.toml:17)
-  - `langchain-google-vertexai>=2.0.0`
-- [pyproject.toml](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/mcp-fca-hackaton/pyproject.toml:19)
-  - `google-cloud-aiplatform>=1.70.0`
+`the real agent was built elsewhere and Agent Builder was added later`
 
-### 2. Google Cloud runtime is real
+That is not the story we want to tell.
 
-The repo is not only naming Google Cloud. It is built and deployed around it:
+## Chosen Resolution
 
-- Cloud Run deployment/config assets exist under `cloudbuild` and `infra/gcp`
-- Vertex model configuration is used in runtime code, not just docs
-- the active backend path depends on Google Cloud ADC / Vertex configuration
+The supply extraction workflow itself now becomes the Google-built agent path.
 
-## 3. MCP server usage is real
+Concretely:
 
-The project contains a real MCP server and a backend that calls it:
+1. keep the existing extraction, qualification, normalization, mapping, persistence, and Phoenix span logic
+2. replace the orchestration layer for `POST /project-input-batches/{input_batch_id}/agentic-shadow-runs/run`
+3. use Google ADK as the orchestration framework for that workflow
+4. demote LangGraph from the judge-facing story
 
-- [server.py](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/mcp-fca-hackaton/server.py:9)
-  - imports `FastMCP`
-- [server.py](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/mcp-fca-hackaton/server.py:56)
-  - initializes the MCP server
-- [app.py](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/mcp-fca-hackaton/nexum_api/app.py:100)
-  - resolves `SUPPLY_AGENT_MCP_URL`
-- [app.py](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/mcp-fca-hackaton/nexum_api/app.py:1028)
-  - fails hard if the MCP URL is not configured
+## What Must Be True Before Submission
 
-That is strong evidence that MCP is part of the real runtime contract.
+1. the deployed `agentic_shadow` run path must execute under Google ADK orchestration
+2. Phoenix must still show the same core workflow spans:
+   - `extract_shadow_candidates`
+   - `shadow_qualification`
+   - `shadow_normalization`
+   - `shadow_market_mapping`
+3. the repo and README must describe ADK as the orchestration framework for supply intelligence
+4. LangGraph should not be presented as the primary agent framework in the submission materials
 
-### 4. Arize / Phoenix evidence is real
+## Code-Level Proof Target
 
-Partner-track observability and iteration evidence is both implemented and documented:
+Judges should be able to find all of the following in the final repo:
 
-- `domain/observability/arize_tracing.py`
-- [hackathon-pitch-phoenix-insights.md](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/docs/hackathon-pitch-phoenix-insights.md)
-- [block2-subplan-phoenix-iteration-comparison.md](/Users/gabriel.linero/repos/hack/gc_ra_hack/baqhack/Nexum-IA/docs/block2-subplan-phoenix-iteration-comparison.md)
+1. Google ADK imports in the active supply workflow path
+2. a real ADK `Agent` / `Runner` orchestration entrypoint
+3. Gemini model usage under Google Cloud
+4. MCP tool/runtime boundary
+5. Phoenix trace evidence on the same supply workflow
 
-## What The Repo Does Not Yet Prove
+## Remaining Verification Step
 
-I found no code evidence for any of the following Agent Builder style runtime surfaces:
-
-1. Vertex AI Agent Builder APIs
-2. Agent Engine / Managed Agents API calls
-3. Agent Development Kit usage
-4. Discovery Engine / Vertex AI Search integration
-5. Dialogflow or related Agent Builder runtime usage
-6. Reasoning Engine / agent platform runtime objects
-
-The targeted repo scan found:
-
-- no `agent builder` references
-- no `discoveryengine` imports
-- no `dialogflow` imports
-- no `agent engine` or `reasoning engine` classes
-- no ADK-related code
-
-The current runtime stack is closer to:
-
-`LangGraph + Vertex Gemini + FastMCP + Cloud Run + Phoenix`
-
-which is credible and functional, but is not the same as proving `Google Cloud Agent Builder` usage.
-
-## Why This Matters
-
-The hackathon reminder was explicit:
-
-`Your project must use Gemini + Google Cloud Agent Builder + your chosen partner's MCP server`
-
-If judges enforce that literally, the current repo is exposed.
-
-## Current Recommendation
-
-Treat Agent Builder as the highest-priority compliance decision before final submission.
-
-There are only two honest paths:
-
-1. **Prove it exists already**
-   - only possible if there is another runtime surface or branch we have not yet audited
-2. **Add a minimal real integration now**
-   - the integration must be imported and called at runtime
-   - README mention alone is not enough
-
-## Fastest Next Audit Step
-
-If we continue on this thread, the next concrete task should be:
-
-1. inspect whether any external service or sibling repo contains the Agent Builder path that is not yet vendored here
-2. if not, decide immediately whether to implement a minimal Agent Builder runtime slice tonight
-
-## External Documentation Note
-
-Current Google Cloud documentation distinguishes ordinary Vertex/Gemini usage from Vertex AI Agent Builder / Agent Engine style usage.
-
-In other words:
-
-`using ChatVertexAI with Gemini does not, by itself, prove Agent Builder`
-
-That is the standard we should use for the final submission.
+This audit is only complete once the ADK-orchestrated workflow is deployed and observed in a fresh Phoenix run.

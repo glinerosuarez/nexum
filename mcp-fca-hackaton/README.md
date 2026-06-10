@@ -9,7 +9,7 @@ server.py                 # MCP entrypoint
 infra/                    # Postgres / shared infra helpers
 domain/project/           # Project read tools
 domain/supply_price/      # Forecast pipeline + read tools + charts
-domain/agent/             # LangGraph agent + LangChain tool wrappers
+domain/agent/             # legacy generic agent path
 mcp_tools/                  # MCP tool registration
 demo/                     # Demo API tools (PyPI, compound interest)
 scripts/                  # Ops, seeding, integration tests
@@ -49,14 +49,14 @@ Required envs:
 - `FIREBASE_PROJECT_ID`
 - `SUPPLY_AGENT_MCP_URL` (+ optional `SUPPLY_AGENT_MCP_BEARER`)
 
-Optional Agent Builder assist for hackathon compliance/evidence:
+Supply workflow orchestration on Google ADK / Agent Platform:
 
-- `AGENT_BUILDER_ENABLED=true`
+- `SUPPLY_AGENT_ORCHESTRATOR=adk`
 - `AGENT_BUILDER_PROJECT_ID=<gcp-project-id>` (defaults to Vertex/project deploy context when set)
 - `AGENT_BUILDER_LOCATION=us-central1`
 - `AGENT_BUILDER_MODEL=gemini-2.5-flash`
 
-When enabled, the agentic supply-intelligence pipeline runs a small Vertex AI Agent Builder ADK assist and persists its result into the `project_input_agentic_runs.summary.agent_builder` block while also emitting an `agent_builder_assist` Phoenix span.
+The judge-facing `agentic_shadow` workflow should run under Google ADK orchestration. The existing extraction, qualification, normalization, mapping, persistence, and Phoenix spans remain the same domain logic, but the orchestration layer for `/project-input-batches/{input_batch_id}/agentic-shadow-runs/run` is intended to use ADK rather than LangGraph.
 
 Deploy script:
 

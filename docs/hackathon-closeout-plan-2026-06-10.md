@@ -32,7 +32,7 @@ What is currently missing or risky:
 
 1. There is no root `LICENSE` file in `baqhack/Nexum-IA`.
 2. The current README is more like a monorepo technical overview than a judge-facing submission README.
-3. We have strong repo evidence for Gemini, Cloud Run, MCP, and Phoenix/Arize, but we still need an explicit runtime-proof pass for the exact requirement wording around Google Cloud Agent Builder.
+3. We have strong repo evidence for Gemini, Cloud Run, MCP, and Phoenix/Arize, and the chosen compliance fix is now to make the supply extraction workflow itself run under Google ADK orchestration.
 4. Demo assets are not yet formalized in-repo:
    - final 3-minute script
    - final submission text block
@@ -62,7 +62,7 @@ These are the items that can disqualify or weaken the submission even if the pro
    - Gemini is called at runtime
    - Google Cloud services are called at runtime
    - partner MCP server story is explicit and backed by code
-   - Google Cloud Agent Builder requirement is either explicitly satisfied in code or clearly identified as a submission risk that must be resolved before final submit
+   - the supply extraction workflow itself is orchestrated by Google ADK / Agent Platform in the live deployed path
 5. Confirm the hosted project URL is stable and points to the live app, not a stale or internal endpoint.
 
 ### P1: Judge Narrative Package
@@ -105,13 +105,12 @@ Before submission, we should be able to point judges to exact code/runtime surfa
    - `domain/observability/arize_tracing.py`
    - Phoenix iteration docs in `docs/`
 
-### Open verification task
+### Chosen resolution
 
-1. Run one deliberate code audit for `Google Cloud Agent Builder` usage.
-2. If it is present, document the exact files and runtime path in the README/submission notes.
-3. If it is not present, treat that as the highest-priority compliance risk and decide immediately whether:
-   - we can add a minimal but real runtime integration in time, or
-   - the submission must be reframed before final form submission
+1. The judge-facing supply workflow should not remain under LangGraph orchestration.
+2. The repo is now pivoting to use Google ADK as the orchestration layer for `POST /project-input-batches/{input_batch_id}/agentic-shadow-runs/run`.
+3. Existing extraction, qualification, normalization, mapping, persistence, and Phoenix spans stay intact as domain logic.
+4. The framework swap is only at the orchestration boundary so the live demo path stays stable.
 
 ## Execution Order
 
@@ -128,7 +127,7 @@ Before submission, we should be able to point judges to exact code/runtime surfa
 2. Verify runtime proof for Google Cloud services.
 3. Verify runtime proof for MCP usage.
 4. Verify partner track selection and narrative.
-5. Verify or resolve the Google Cloud Agent Builder requirement.
+5. Deploy and verify the ADK-orchestrated supply workflow.
 
 ### Phase 3: Live Readiness
 
@@ -169,7 +168,7 @@ Before submission, we should be able to point judges to exact code/runtime surfa
 ## Immediate Next Actions
 
 1. Add the root `LICENSE`.
-2. Audit the repo for explicit Google Cloud Agent Builder runtime usage.
-3. Rewrite the root README into a judge-facing submission README.
-4. Create the final submission brief and demo runbook.
-5. Do one final live smoke pass and then submit.
+2. Deploy the ADK-orchestrated supply workflow.
+3. Verify Phoenix on one fresh run and capture proof.
+4. Rewrite the root README into a judge-facing submission README.
+5. Create the final submission brief and demo runbook.

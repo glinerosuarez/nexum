@@ -306,16 +306,12 @@ class _ShadowExtractionResult(BaseModel):
     selected_rows: list[_ShadowExtractionSelection] = Field(default_factory=list)
 
 
-class _AgentBuilderAssistResult(BaseModel):
+class _AdkOrchestrationResult(BaseModel):
     status: str = "disabled"
     backend: str = "vertex_ai_agent_builder_adk"
     model_name: str | None = None
     event_count: int = 0
-    response_excerpt: str | None = None
-    summary: str | None = None
-    focus_supply_classes: list[str] = Field(default_factory=list)
-    focus_supply_names: list[str] = Field(default_factory=list)
-    risk_note: str | None = None
+    final_response: str | None = None
     error: str | None = None
 
 
@@ -658,8 +654,12 @@ def _env_flag(name: str, *, default: bool = False) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
-def _agent_builder_enabled() -> bool:
-    return _env_flag("AGENT_BUILDER_ENABLED", default=False)
+def _supply_agent_orchestrator() -> str:
+    return (os.getenv("SUPPLY_AGENT_ORCHESTRATOR") or "adk").strip().lower()
+
+
+def _use_adk_orchestrator() -> bool:
+    return _supply_agent_orchestrator() == "adk"
 
 
 def _agent_builder_model() -> str:
@@ -675,45 +675,27 @@ def _agent_builder_location() -> str:
     return (os.getenv("AGENT_BUILDER_LOCATION") or _vertex_location()).strip()
 
 
-def _build_agent_builder_prompt(
+def _build_adk_orchestration_prompt(
     *,
     input_batch_id: str,
     project_id: str | None,
-    supplies: list[dict[str, Any]],
-    mappings: list[dict[str, Any]],
 ) -> str:
-    mapping_by_supply_id = {str(mapping.get("agentic_supply_id") or ""): mapping for mapping in mappings}
-    compact_supplies: list[dict[str, Any]] = []
-    for supply in supplies[:10]:
-        mapping = mapping_by_supply_id.get(str(supply.get("id") or "")) or {}
-        compact_supplies.append(
-            {
-                "display_name": supply.get("display_name"),
-                "canonical_name": supply.get("canonical_name"),
-                "canonical_category": supply.get("canonical_category"),
-                "monitorability_status": supply.get("monitorability_status"),
-                "market_mapping_status": supply.get("market_mapping_status"),
-                "supply_class": mapping.get("supply_class"),
-                "series_key": mapping.get("series_key"),
-            }
-        )
-
     payload = {
         "input_batch_id": input_batch_id,
         "project_id": project_id,
-        "supplies": compact_supplies,
     }
     return (
-        "You are a construction supply-intelligence assistant running inside Google Cloud Vertex AI Agent Builder.\n"
-        "Review the provided project shadow supplies and respond with compact JSON only.\n"
+        "You are the Nexum supply-intelligence orchestration agent running on Google Cloud Vertex AI Agent Builder ADK.\n"
+        "You must call the available workflow tool exactly once to execute the prepared shadow pipeline.\n"
+        "After the tool call, respond with compact JSON only.\n"
         "Schema:\n"
         "{"
-        "\"summary\": string,"
-        "\"focus_supply_classes\": string[],"
-        "\"focus_supply_names\": string[],"
-        "\"risk_note\": string"
+        "\"status\": string,"
+        "\"agentic_run_id\": string,"
+        "\"candidate_count\": number,"
+        "\"qualified_supply_count\": number"
         "}\n"
-        "Keep the summary under 45 words. Do not invent prices or external facts.\n\n"
+        "Do not invent values. Use the workflow tool output.\n\n"
         f"Payload:\n{json.dumps(payload, ensure_ascii=False)}"
     )
 
@@ -783,7 +765,7 @@ def _collect_text_fragments(value: Any) -> list[str]:
     return deduped
 
 
-def _parse_agent_builder_json(text: str) -> dict[str, Any] | None:
+def _parse_embedded_json(text: str) -> dict[str, Any] | None:
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or end <= start:
@@ -793,92 +775,6 @@ def _parse_agent_builder_json(text: str) -> dict[str, Any] | None:
     except Exception:
         return None
     return payload if isinstance(payload, dict) else None
-
-
-def _normalize_string_list(value: Any, *, limit: int = 5) -> list[str]:
-    items: list[str] = []
-    for raw in list(value or []):
-        text = _collapse_whitespace(raw)
-        if text:
-            items.append(text)
-        if len(items) >= limit:
-            break
-    return items
-
-
-def _run_agent_builder_assist(
-    *,
-    input_batch_id: str,
-    project_id: str | None,
-    supplies: list[dict[str, Any]],
-    mappings: list[dict[str, Any]],
-) -> dict[str, Any]:
-    if not _agent_builder_enabled():
-        return _AgentBuilderAssistResult().model_dump()
-
-    try:
-        import vertexai
-        from google.adk.agents import Agent
-        from vertexai.agent_engines import AdkApp
-    except Exception as exc:
-        return _AgentBuilderAssistResult(
-            status="error",
-            model_name=_agent_builder_model(),
-            error=f"Agent Builder import failed: {exc}",
-        ).model_dump()
-
-    prompt = _build_agent_builder_prompt(
-        input_batch_id=input_batch_id,
-        project_id=project_id,
-        supplies=supplies,
-        mappings=mappings,
-    )
-
-    try:
-        vertexai.init(
-            project=_agent_builder_project_id(),
-            location=_agent_builder_location(),
-        )
-        app = AdkApp(
-            agent=Agent(
-                model=_agent_builder_model(),
-                name="nexum_supply_intelligence_assist",
-                instruction=(
-                    "Analyze construction supply candidates and respond with compact JSON only. "
-                    "Prioritize semantic supply meaning and unresolved decision-support gaps."
-                ),
-            )
-        )
-
-        async def _collect_events() -> list[Any]:
-            events: list[Any] = []
-            async for event in app.async_stream_query(
-                user_id=project_id or input_batch_id,
-                message=prompt,
-            ):
-                events.append(event)
-            return events
-
-        events = asyncio.run(_collect_events())
-        fragments = _collect_text_fragments(events)
-        raw_text = "\n".join(fragments)
-        parsed = _parse_agent_builder_json(raw_text) or {}
-        return _AgentBuilderAssistResult(
-            status="completed",
-            model_name=_agent_builder_model(),
-            event_count=len(events),
-            response_excerpt=_truncate_text(raw_text, max_chars=280) if raw_text else None,
-            summary=_collapse_whitespace(parsed.get("summary") or "") or None,
-            focus_supply_classes=_normalize_string_list(parsed.get("focus_supply_classes")),
-            focus_supply_names=_normalize_string_list(parsed.get("focus_supply_names")),
-            risk_note=_collapse_whitespace(parsed.get("risk_note") or "") or None,
-        ).model_dump()
-    except Exception as exc:
-        return _AgentBuilderAssistResult(
-            status="error",
-            model_name=_agent_builder_model(),
-            error=str(exc),
-        ).model_dump()
 
 
 def _coerce_confidence(value: Any) -> str:
@@ -2083,50 +1979,6 @@ def _qualify_agentic_shadow_run_impl(
             )
             mark_span_ok(mapping_span)
 
-        with start_as_current_span(
-            "agent_builder_assist",
-            kind="CHAIN",
-            attributes={
-                "agent_builder.enabled": _agent_builder_enabled(),
-                "agent_builder.model_name": _agent_builder_model(),
-                "shadow.shadow_supply_count": len(artifacts["supplies"]),
-            },
-        ) as agent_builder_span:
-            agent_builder_result = _run_agent_builder_assist(
-                input_batch_id=input_batch_id,
-                project_id=str(batch.get("project_id")) if batch.get("project_id") else None,
-                supplies=artifacts["supplies"],
-                mappings=artifacts["mappings"],
-            )
-            set_span_attributes(
-                agent_builder_span,
-                {
-                    "agent_builder.status": agent_builder_result.get("status") or "unknown",
-                    "agent_builder.event_count": int(agent_builder_result.get("event_count") or 0),
-                    "agent_builder.summary": _truncate_text(
-                        agent_builder_result.get("summary")
-                        or agent_builder_result.get("response_excerpt")
-                        or "",
-                        max_chars=220,
-                    ),
-                    "agent_builder.focus_supply_classes_json": _json(
-                        agent_builder_result.get("focus_supply_classes") or [],
-                        [],
-                    ),
-                    "agent_builder.focus_supply_names_json": _json(
-                        agent_builder_result.get("focus_supply_names") or [],
-                        [],
-                    ),
-                },
-            )
-            if agent_builder_result.get("status") == "error":
-                mark_span_error(
-                    agent_builder_span,
-                    RuntimeError(str(agent_builder_result.get("error") or "Agent Builder assist failed")),
-                )
-            else:
-                mark_span_ok(agent_builder_span)
-
         summary = {
             **(run.get("summary") or {}),
             **(payload.get("summary") or {}),
@@ -2135,7 +1987,6 @@ def _qualify_agentic_shadow_run_impl(
             "rejected_candidate_count": max(len(candidates) - qualified_supply_count, 0),
             "monitorable_supply_count": monitorable_supply_count,
             "judgment_counts": _summary_from_counter(label_counter),
-            "agent_builder": agent_builder_result,
             **artifacts["summary"],
         }
         cur.execute(
@@ -2172,6 +2023,137 @@ def _qualify_agentic_shadow_run_impl(
         "observability": _observability_payload(trace_id),
         "_artifacts_summary": artifacts["summary"],
     }
+
+
+def _run_agentic_shadow_pipeline_via_adk(
+    conn: Connection,
+    *,
+    created_by_profile_id: str,
+    input_batch_id: str,
+    payload: dict[str, Any],
+    qualification_payload: dict[str, Any],
+    trace_id: str | None,
+) -> dict[str, Any]:
+    try:
+        import vertexai
+        from google.adk.agents import Agent
+        from google.adk.runners import InMemoryRunner
+        from google.genai import types
+    except Exception as exc:
+        return {
+            **_AdkOrchestrationResult(
+                status="error",
+                model_name=_agent_builder_model(),
+                error=f"ADK import failed: {exc}",
+            ).model_dump(),
+            "extract_result": None,
+            "qualify_result": None,
+        }
+
+    try:
+        vertexai.init(
+            project=_agent_builder_project_id(),
+            location=_agent_builder_location(),
+        )
+
+        state: dict[str, Any] = {"extract_result": None, "qualify_result": None}
+
+        def run_shadow_pipeline_tool() -> dict[str, Any]:
+            """Execute the prepared Nexum supply-intelligence workflow exactly once."""
+            if state.get("qualify_result") is not None:
+                qualified = state["qualify_result"]
+                return {
+                    "status": "completed",
+                    "agentic_run_id": qualified.get("agentic_run_id"),
+                    "candidate_count": qualified.get("candidate_count"),
+                    "qualified_supply_count": qualified.get("qualified_supply_count"),
+                }
+
+            extract_result = _extract_agentic_shadow_run_impl(
+                conn,
+                created_by_profile_id=created_by_profile_id,
+                input_batch_id=input_batch_id,
+                payload=payload,
+                trace_id=trace_id,
+            )
+            qualify_result = _qualify_agentic_shadow_run_impl(
+                conn,
+                created_by_profile_id=created_by_profile_id,
+                input_batch_id=input_batch_id,
+                agentic_run_id=str(extract_result["agentic_run_id"]),
+                payload=qualification_payload,
+                trace_id=trace_id,
+            )
+            state["extract_result"] = extract_result
+            state["qualify_result"] = qualify_result
+            return {
+                "status": "completed",
+                "agentic_run_id": qualify_result.get("agentic_run_id"),
+                "candidate_count": qualify_result.get("candidate_count"),
+                "qualified_supply_count": qualify_result.get("qualified_supply_count"),
+            }
+
+        runner = InMemoryRunner(
+            agent=Agent(
+                name="nexum_supply_intelligence_agent",
+                model=_agent_builder_model(),
+                instruction=(
+                    "You orchestrate Nexum's supply-intelligence workflow. "
+                    "Always call run_shadow_pipeline_tool exactly once, then return compact JSON only."
+                ),
+                tools=[run_shadow_pipeline_tool],
+            ),
+            app_name="nexum_supply_intelligence_adk",
+        )
+
+        async def _run() -> list[Any]:
+            session_service = runner.session_service
+            await session_service.create_session(
+                app_name="nexum_supply_intelligence_adk",
+                user_id=payload.get("project_id") or created_by_profile_id,
+                session_id=input_batch_id,
+            )
+            events: list[Any] = []
+            content = types.Content(
+                role="user",
+                parts=[types.Part(text=_build_adk_orchestration_prompt(
+                    input_batch_id=input_batch_id,
+                    project_id=str(payload.get("project_id") or "").strip() or None,
+                ))],
+            )
+            async for event in runner.run_async(
+                user_id=payload.get("project_id") or created_by_profile_id,
+                session_id=input_batch_id,
+                new_message=content,
+            ):
+                events.append(event)
+            return events
+
+        events = asyncio.run(_run())
+        raw_text = "\n".join(_collect_text_fragments(events))
+        parsed = _parse_embedded_json(raw_text) or {}
+        return {
+            **_AdkOrchestrationResult(
+                status="completed" if state.get("qualify_result") is not None else "error",
+                model_name=_agent_builder_model(),
+                event_count=len(events),
+                final_response=_truncate_text(raw_text, max_chars=280) if raw_text else None,
+                error=None if state.get("qualify_result") is not None else "ADK agent did not complete workflow tool execution.",
+            ).model_dump(),
+            "parsed_response": parsed,
+            "extract_result": state.get("extract_result"),
+            "qualify_result": state.get("qualify_result"),
+        }
+    except Exception as exc:
+        return {
+            **_AdkOrchestrationResult(
+                status="error",
+                model_name=_agent_builder_model(),
+                error=str(exc),
+            ).model_dump(),
+            "extract_result": None,
+            "qualify_result": None,
+        }
 
 
 def create_agentic_shadow_run(
@@ -2488,6 +2470,7 @@ def run_agentic_shadow_pipeline(
         kind="CHAIN",
         attributes={
             "shadow.stage": "pipeline",
+            "shadow.orchestrator": _supply_agent_orchestrator(),
             "shadow.input_batch_id": input_batch_id,
             "shadow.model_name": str(payload.get("model_name") or _vertex_model()),
             "shadow.retrieval_strategy": str(payload.get("retrieval_strategy") or ""),
@@ -2497,13 +2480,62 @@ def run_agentic_shadow_pipeline(
     ) as root_span:
         trace_id = current_trace_id(root_span)
         try:
-            extract_result = _extract_agentic_shadow_run_impl(
-                conn,
-                created_by_profile_id=created_by_profile_id,
-                input_batch_id=input_batch_id,
-                payload=payload,
-                trace_id=trace_id,
-            )
+            orchestration_result: dict[str, Any] | None = None
+            if _use_adk_orchestrator():
+                with start_as_current_span(
+                    "agent_platform_orchestration",
+                    kind="CHAIN",
+                    attributes={
+                        "agent_platform.framework": "google_adk",
+                        "agent_platform.model_name": _agent_builder_model(),
+                        "shadow.input_batch_id": input_batch_id,
+                    },
+                ) as orchestration_span:
+                    orchestration_result = _run_agentic_shadow_pipeline_via_adk(
+                        conn,
+                        created_by_profile_id=created_by_profile_id,
+                        input_batch_id=input_batch_id,
+                        payload=payload,
+                        qualification_payload=qualification_payload,
+                        trace_id=trace_id,
+                    )
+                    set_span_attributes(
+                        orchestration_span,
+                        {
+                            "agent_platform.status": orchestration_result.get("status") or "unknown",
+                            "agent_platform.backend": orchestration_result.get("backend") or "",
+                            "agent_platform.event_count": int(orchestration_result.get("event_count") or 0),
+                            "agent_platform.final_response": _truncate_text(
+                                orchestration_result.get("final_response") or "",
+                                max_chars=220,
+                            ),
+                        },
+                    )
+                    if orchestration_result.get("status") == "error":
+                        mark_span_error(
+                            orchestration_span,
+                            RuntimeError(str(orchestration_result.get("error") or "ADK orchestration failed")),
+                        )
+                        raise RuntimeError(str(orchestration_result.get("error") or "ADK orchestration failed"))
+                    mark_span_ok(orchestration_span)
+                extract_result = orchestration_result.get("extract_result") or {}
+                qualify_result = orchestration_result.get("qualify_result") or {}
+            else:
+                extract_result = _extract_agentic_shadow_run_impl(
+                    conn,
+                    created_by_profile_id=created_by_profile_id,
+                    input_batch_id=input_batch_id,
+                    payload=payload,
+                    trace_id=trace_id,
+                )
+                qualify_result = _qualify_agentic_shadow_run_impl(
+                    conn,
+                    created_by_profile_id=created_by_profile_id,
+                    input_batch_id=input_batch_id,
+                    agentic_run_id=str(extract_result["agentic_run_id"]),
+                    payload=qualification_payload,
+                    trace_id=trace_id,
+                )
             batch = extract_result.get("_batch") or {}
             set_span_attributes(
                 root_span,
@@ -2513,19 +2545,12 @@ def run_agentic_shadow_pipeline(
                     project_id=str(batch.get("project_id") or "") or None,
                 ),
             )
-            qualify_result = _qualify_agentic_shadow_run_impl(
-                conn,
-                created_by_profile_id=created_by_profile_id,
-                input_batch_id=input_batch_id,
-                agentic_run_id=str(extract_result["agentic_run_id"]),
-                payload=qualification_payload,
-                trace_id=trace_id,
-            )
             set_span_attributes(
                 root_span,
                 {
                     "run.success": True,
                     "shadow.stage": "pipeline",
+                    "shadow.orchestrator": _supply_agent_orchestrator(),
                     "shadow.agentic_run_id": extract_result.get("agentic_run_id") or "",
                     "shadow.chunk_count": extract_result.get("_chunk_count") or 0,
                     "shadow.candidate_count": qualify_result.get("candidate_count") or 0,
@@ -2541,6 +2566,19 @@ def run_agentic_shadow_pipeline(
             final_result = {
                 **extract_result,
                 **{k: v for k, v in qualify_result.items() if not str(k).startswith("_")},
+                **(
+                    {
+                        "agent_platform": {
+                            "framework": "google_adk",
+                            "backend": orchestration_result.get("backend"),
+                            "status": orchestration_result.get("status"),
+                            "event_count": orchestration_result.get("event_count"),
+                            "final_response": orchestration_result.get("final_response"),
+                        }
+                    }
+                    if orchestration_result is not None
+                    else {}
+                ),
             }
         except Exception as exc:
             mark_span_error(root_span, exc)
