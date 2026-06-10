@@ -780,13 +780,28 @@ def _dashboard_supplies_from_latest_run(latest_run: dict[str, Any] | None) -> tu
 
         key = _run_supply_key(raw_selected, f"supply:{idx}")
         mapping = mappings_by_key.get(key)
-        if not _dashboard_should_include_run_supply(raw_selected, mapping):
-            continue
         exposure = _to_number(raw_selected.get("subtotal_budget"), 0)
         unit_price = _to_number(raw_selected.get("precio_unitario_budget"), 0)
         quantity = _to_number(raw_selected.get("cantidad_planeada"), 0)
         availability = _run_supply_availability(mapping)
         supply_type = _run_supply_type(raw_selected, mapping)
+
+        if mapping and mapping.get("error_code"):
+            derived_alerts.append(
+                {
+                    "alert_id": f"{run_id}:{key}",
+                    "supply_id": key,
+                    "nombre": supply_name,
+                    "tipo": supply_type,
+                    "disponibilidad": availability,
+                    "mensaje": str(mapping.get("error_message") or mapping.get("error_code")),
+                    "abierta_desde": opened_at,
+                    "exposicion": exposure,
+                },
+            )
+
+        if not _dashboard_should_include_run_supply(raw_selected, mapping):
+            continue
 
         derived_supplies.append(
             {
@@ -809,20 +824,6 @@ def _dashboard_supplies_from_latest_run(latest_run: dict[str, Any] | None) -> tu
                 "proyectos_impactados": 1,
             },
         )
-
-        if mapping and mapping.get("error_code"):
-            derived_alerts.append(
-                {
-                    "alert_id": f"{run_id}:{key}",
-                    "supply_id": key,
-                    "nombre": supply_name,
-                    "tipo": supply_type,
-                    "disponibilidad": availability,
-                    "mensaje": str(mapping.get("error_message") or mapping.get("error_code")),
-                    "abierta_desde": opened_at,
-                    "exposicion": exposure,
-                },
-            )
 
     derived_supplies.sort(key=lambda item: _to_number(item.get("exposicion_presupuestal"), 0), reverse=True)
     derived_alerts.sort(key=lambda item: _to_number(item.get("exposicion"), 0), reverse=True)
