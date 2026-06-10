@@ -49,6 +49,15 @@ Required envs:
 - `FIREBASE_PROJECT_ID`
 - `SUPPLY_AGENT_MCP_URL` (+ optional `SUPPLY_AGENT_MCP_BEARER`)
 
+Optional Agent Builder assist for hackathon compliance/evidence:
+
+- `AGENT_BUILDER_ENABLED=true`
+- `AGENT_BUILDER_PROJECT_ID=<gcp-project-id>` (defaults to Vertex/project deploy context when set)
+- `AGENT_BUILDER_LOCATION=us-central1`
+- `AGENT_BUILDER_MODEL=gemini-2.5-flash`
+
+When enabled, the agentic supply-intelligence pipeline runs a small Vertex AI Agent Builder ADK assist and persists its result into the `project_input_agentic_runs.summary.agent_builder` block while also emitting an `agent_builder_assist` Phoenix span.
+
 Deploy script:
 
 ```bash

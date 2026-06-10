@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -303,6 +304,19 @@ class _ShadowExtractionSelection(BaseModel):
 
 class _ShadowExtractionResult(BaseModel):
     selected_rows: list[_ShadowExtractionSelection] = Field(default_factory=list)
+
+
+class _AgentBuilderAssistResult(BaseModel):
+    status: str = "disabled"
+    backend: str = "vertex_ai_agent_builder_adk"
+    model_name: str | None = None
+    event_count: int = 0
+    response_excerpt: str | None = None
+    summary: str | None = None
+    focus_supply_classes: list[str] = Field(default_factory=list)
+    focus_supply_names: list[str] = Field(default_factory=list)
+    risk_note: str | None = None
+    error: str | None = None
 
 
 def _json(value: Any, default: Any) -> str:
@@ -635,6 +649,236 @@ def _vertex_location() -> str:
 
 def _vertex_model() -> str:
     return (os.getenv("VERTEX_MODEL") or "gemini-2.5-flash").strip()
+
+
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    value = (os.getenv(name) or "").strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "on"}
+
+
+def _agent_builder_enabled() -> bool:
+    return _env_flag("AGENT_BUILDER_ENABLED", default=False)
+
+
+def _agent_builder_model() -> str:
+    return (os.getenv("AGENT_BUILDER_MODEL") or _vertex_model()).strip()
+
+
+def _agent_builder_project_id() -> str | None:
+    value = (os.getenv("AGENT_BUILDER_PROJECT_ID") or "").strip()
+    return value or _vertex_project_id()
+
+
+def _agent_builder_location() -> str:
+    return (os.getenv("AGENT_BUILDER_LOCATION") or _vertex_location()).strip()
+
+
+def _build_agent_builder_prompt(
+    *,
+    input_batch_id: str,
+    project_id: str | None,
+    supplies: list[dict[str, Any]],
+    mappings: list[dict[str, Any]],
+) -> str:
+    mapping_by_supply_id = {str(mapping.get("agentic_supply_id") or ""): mapping for mapping in mappings}
+    compact_supplies: list[dict[str, Any]] = []
+    for supply in supplies[:10]:
+        mapping = mapping_by_supply_id.get(str(supply.get("id") or "")) or {}
+        compact_supplies.append(
+            {
+                "display_name": supply.get("display_name"),
+                "canonical_name": supply.get("canonical_name"),
+                "canonical_category": supply.get("canonical_category"),
+                "monitorability_status": supply.get("monitorability_status"),
+                "market_mapping_status": supply.get("market_mapping_status"),
+                "supply_class": mapping.get("supply_class"),
+                "series_key": mapping.get("series_key"),
+            }
+        )
+
+    payload = {
+        "input_batch_id": input_batch_id,
+        "project_id": project_id,
+        "supplies": compact_supplies,
+    }
+    return (
+        "You are a construction supply-intelligence assistant running inside Google Cloud Vertex AI Agent Builder.\n"
+        "Review the provided project shadow supplies and respond with compact JSON only.\n"
+        "Schema:\n"
+        "{"
+        "\"summary\": string,"
+        "\"focus_supply_classes\": string[],"
+        "\"focus_supply_names\": string[],"
+        "\"risk_note\": string"
+        "}\n"
+        "Keep the summary under 45 words. Do not invent prices or external facts.\n\n"
+        f"Payload:\n{json.dumps(payload, ensure_ascii=False)}"
+    )
+
+
+def _coerce_jsonable(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): _coerce_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_coerce_jsonable(item) for item in value]
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return _coerce_jsonable(model_dump())
+        except Exception:
+            pass
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        try:
+            return _coerce_jsonable(to_dict())
+        except Exception:
+            pass
+    if hasattr(value, "__dict__") and not isinstance(value, (str, int, float, bool)):
+        try:
+            return _coerce_jsonable(vars(value))
+        except Exception:
+            pass
+    return value
+
+
+def _collect_text_fragments(value: Any) -> list[str]:
+    jsonable = _coerce_jsonable(value)
+    fragments: list[str] = []
+
+    def walk(item: Any) -> None:
+        if item is None:
+            return
+        if isinstance(item, str):
+            text = _collapse_whitespace(item)
+            if text:
+                fragments.append(text)
+            return
+        if isinstance(item, dict):
+            prioritized = ["text", "output_text", "message", "content", "response"]
+            for key in prioritized:
+                if key in item:
+                    walk(item[key])
+            for key, value in item.items():
+                if key in prioritized:
+                    continue
+                walk(value)
+            return
+        if isinstance(item, list):
+            for child in item:
+                walk(child)
+            return
+        text = _collapse_whitespace(item)
+        if text:
+            fragments.append(text)
+
+    walk(jsonable)
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for fragment in fragments:
+        if fragment not in seen:
+            seen.add(fragment)
+            deduped.append(fragment)
+    return deduped
+
+
+def _parse_agent_builder_json(text: str) -> dict[str, Any] | None:
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    try:
+        payload = json.loads(text[start : end + 1])
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _normalize_string_list(value: Any, *, limit: int = 5) -> list[str]:
+    items: list[str] = []
+    for raw in list(value or []):
+        text = _collapse_whitespace(raw)
+        if text:
+            items.append(text)
+        if len(items) >= limit:
+            break
+    return items
+
+
+def _run_agent_builder_assist(
+    *,
+    input_batch_id: str,
+    project_id: str | None,
+    supplies: list[dict[str, Any]],
+    mappings: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not _agent_builder_enabled():
+        return _AgentBuilderAssistResult().model_dump()
+
+    try:
+        import vertexai
+        from google.adk.agents import Agent
+        from vertexai.agent_engines import AdkApp
+    except Exception as exc:
+        return _AgentBuilderAssistResult(
+            status="error",
+            model_name=_agent_builder_model(),
+            error=f"Agent Builder import failed: {exc}",
+        ).model_dump()
+
+    prompt = _build_agent_builder_prompt(
+        input_batch_id=input_batch_id,
+        project_id=project_id,
+        supplies=supplies,
+        mappings=mappings,
+    )
+
+    try:
+        vertexai.init(
+            project=_agent_builder_project_id(),
+            location=_agent_builder_location(),
+        )
+        app = AdkApp(
+            agent=Agent(
+                model=_agent_builder_model(),
+                name="nexum_supply_intelligence_assist",
+                instruction=(
+                    "Analyze construction supply candidates and respond with compact JSON only. "
+                    "Prioritize semantic supply meaning and unresolved decision-support gaps."
+                ),
+            )
+        )
+
+        async def _collect_events() -> list[Any]:
+            events: list[Any] = []
+            async for event in app.async_stream_query(
+                user_id=project_id or input_batch_id,
+                message=prompt,
+            ):
+                events.append(event)
+            return events
+
+        events = asyncio.run(_collect_events())
+        fragments = _collect_text_fragments(events)
+        raw_text = "\n".join(fragments)
+        parsed = _parse_agent_builder_json(raw_text) or {}
+        return _AgentBuilderAssistResult(
+            status="completed",
+            model_name=_agent_builder_model(),
+            event_count=len(events),
+            response_excerpt=_truncate_text(raw_text, max_chars=280) if raw_text else None,
+            summary=_collapse_whitespace(parsed.get("summary") or "") or None,
+            focus_supply_classes=_normalize_string_list(parsed.get("focus_supply_classes")),
+            focus_supply_names=_normalize_string_list(parsed.get("focus_supply_names")),
+            risk_note=_collapse_whitespace(parsed.get("risk_note") or "") or None,
+        ).model_dump()
+    except Exception as exc:
+        return _AgentBuilderAssistResult(
+            status="error",
+            model_name=_agent_builder_model(),
+            error=str(exc),
+        ).model_dump()
 
 
 def _coerce_confidence(value: Any) -> str:
@@ -1839,6 +2083,50 @@ def _qualify_agentic_shadow_run_impl(
             )
             mark_span_ok(mapping_span)
 
+        with start_as_current_span(
+            "agent_builder_assist",
+            kind="CHAIN",
+            attributes={
+                "agent_builder.enabled": _agent_builder_enabled(),
+                "agent_builder.model_name": _agent_builder_model(),
+                "shadow.shadow_supply_count": len(artifacts["supplies"]),
+            },
+        ) as agent_builder_span:
+            agent_builder_result = _run_agent_builder_assist(
+                input_batch_id=input_batch_id,
+                project_id=str(batch.get("project_id")) if batch.get("project_id") else None,
+                supplies=artifacts["supplies"],
+                mappings=artifacts["mappings"],
+            )
+            set_span_attributes(
+                agent_builder_span,
+                {
+                    "agent_builder.status": agent_builder_result.get("status") or "unknown",
+                    "agent_builder.event_count": int(agent_builder_result.get("event_count") or 0),
+                    "agent_builder.summary": _truncate_text(
+                        agent_builder_result.get("summary")
+                        or agent_builder_result.get("response_excerpt")
+                        or "",
+                        max_chars=220,
+                    ),
+                    "agent_builder.focus_supply_classes_json": _json(
+                        agent_builder_result.get("focus_supply_classes") or [],
+                        [],
+                    ),
+                    "agent_builder.focus_supply_names_json": _json(
+                        agent_builder_result.get("focus_supply_names") or [],
+                        [],
+                    ),
+                },
+            )
+            if agent_builder_result.get("status") == "error":
+                mark_span_error(
+                    agent_builder_span,
+                    RuntimeError(str(agent_builder_result.get("error") or "Agent Builder assist failed")),
+                )
+            else:
+                mark_span_ok(agent_builder_span)
+
         summary = {
             **(run.get("summary") or {}),
             **(payload.get("summary") or {}),
@@ -1847,6 +2135,7 @@ def _qualify_agentic_shadow_run_impl(
             "rejected_candidate_count": max(len(candidates) - qualified_supply_count, 0),
             "monitorable_supply_count": monitorable_supply_count,
             "judgment_counts": _summary_from_counter(label_counter),
+            "agent_builder": agent_builder_result,
             **artifacts["summary"],
         }
         cur.execute(
