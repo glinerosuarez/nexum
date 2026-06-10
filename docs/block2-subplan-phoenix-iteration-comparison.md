@@ -132,6 +132,17 @@ Follow-up refinement made after that trace review:
   - retrieval meaning gets sharper
   - forecast-family coarseness stays visible instead of being hidden
 
+Next refinement identified by the same Phoenix replay:
+
+1. a sampled mapped row for lighting control still showed `supply_class = null`
+2. representative example:
+  - `Salida de control de iluminación ... sensor 360 ... sensor de techo ... caja 2400 galvanizada`
+
+Follow-up correction:
+
+1. add explicit `lighting_control` semantic classification
+2. keep the downstream family mapping coarse (`steel`) while improving the supply-level meaning shown in Phoenix
+
 ## Problem Statement
 Even though tracing is live, the current comparison story still has operational friction and quality gaps:
 

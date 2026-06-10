@@ -340,6 +340,26 @@ class TestAgenticShadowQualification(unittest.TestCase):
         self.assertEqual(mapping["supply_class"], "paper_holder")
         self.assertEqual(mapping["supply_class_confidence"], "high")
 
+    def test_heuristic_source_mapping_classifies_lighting_control_sensor(self):
+        mapping = _heuristic_source_mapping(
+            {
+                "canonical_name": (
+                    "s/i salida de control de iluminacion en techo mediante sensor 360 "
+                    "incluye sensor de techo multitecnologia y caja 2400 galvanizada"
+                ),
+                "display_name": (
+                    "S/I salida de control de iluminacion en techo mediante sensor 360, "
+                    "incluye sensor de techo multitecnologia y caja 2400 galvanizada"
+                ),
+                "canonical_category": "tableros",
+            }
+        )
+
+        self.assertEqual(mapping["mapping_status"], "mapped")
+        self.assertEqual(mapping["series_key"], "steel")
+        self.assertEqual(mapping["supply_class"], "lighting_control")
+        self.assertEqual(mapping["supply_class_confidence"], "high")
+
     def test_heuristic_source_mapping_keeps_opening_keyword_match(self):
         mapping = _heuristic_source_mapping(
             {

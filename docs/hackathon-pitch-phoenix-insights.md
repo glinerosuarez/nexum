@@ -75,6 +75,13 @@ Latest Phoenix-guided refinement:
 
 This matters because it sharpens the retrieval story without pretending those items suddenly have a richer forecast model behind them.
 
+Current follow-up from the latest Phoenix replay:
+
+1. one of the remaining `supply_class = null` samples was an electrical control row with `sensor 360`, `sensor de techo`, and `control de iluminación`
+2. instead of letting that keep hiding under a generic `steel` family, it is now classified as `lighting_control`
+
+That keeps the same product principle intact: semantic truth first, coarse downstream family second.
+
 ## Why This Strengthens The Hackathon Story
 This creates a better demo narrative than pretending every recognized supply already has a useful market forecast:
 
