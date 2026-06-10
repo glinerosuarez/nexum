@@ -21,6 +21,7 @@ import {
 } from "@/components/dashboard/SupplyBadges";
 import { getDashboardData } from "@/lib/dashboard-data";
 import { fmtCOP, fmtCOPCompact, fmtDate, fmtNumber, fmtPercent } from "@/lib/format";
+import { getDictionary } from "@/lib/i18n/server";
 
 export const dynamic = "force-dynamic";
 
@@ -36,6 +37,7 @@ export default async function ProjectDashboard({
   const { id: projectId } = await params;
   const { created } = await searchParams;
   const data = await getDashboardData(projectId);
+  const t = await getDictionary(projectId);
   const { project, totals, alerts, topCriticalSupplies, curva, priceRisk } = data;
 
   const cpiTone = project?.cpi == null ? "neutral" : project.cpi >= 1 ? "ok" : project.cpi >= 0.9 ? "warn" : "risk";
@@ -53,15 +55,15 @@ export default async function ProjectDashboard({
   return (
     <>
       <Topbar
-        title={project?.nombre ?? "Sin proyecto activo"}
+        title={project?.nombre ?? t.sidebar.noProjectActive}
         subtitle={
           project
-            ? `Estado: ${prettyStatus(project.estado)} · Avance ${fmtPercent(project.avance_global_percent)}${
+            ? `${t.execDashboard.statusPrefix} ${prettyStatus(project.estado, t)} · ${t.execDashboard.progressPrefix} ${fmtPercent(project.avance_global_percent)}${
                 project.avance_planeado_percent != null
-                  ? ` vs ${fmtPercent(project.avance_planeado_percent)} planeado`
+                  ? ` ${t.execDashboard.vsPlanned} ${fmtPercent(project.avance_planeado_percent)} ${t.execDashboard.planned}`
                   : ""
               }`
-            : "Conecta un proyecto para ver los KPIs ejecutivos."
+            : t.execDashboard.noProjectHint
         }
       />
 
@@ -71,7 +73,7 @@ export default async function ProjectDashboard({
             role="status"
             className="rounded-2xl border border-status-ok/30 bg-status-ok/5 px-4 py-3 text-sm text-status-ok"
           >
-            Proyecto creado correctamente.
+            {t.proyectos.createdOk}
           </div>
         ) : null}
 
@@ -81,48 +83,49 @@ export default async function ProjectDashboard({
               projectId={project.id}
               projectName={project.nombre}
               variant="danger"
+              t={t}
             />
           </div>
         ) : null}
         <section aria-label="KPIs ejecutivos" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KPICard
-            label="Presupuesto APU"
+            label={t.execDashboard.budgetApu}
             value={fmtCOP(totals.presupuesto_total)}
-            hint="Calculado desde actividades × insumos"
+            hint={t.execDashboard.budgetApuHint}
             icon={Wallet}
             highlight
           />
           <KPICard
-            label="Gasto ejecutado"
+            label={t.execDashboard.executedSpend}
             value={fmtCOP(totals.gasto_ejecutado)}
-            hint={`Equivale al ${fmtPercent(consumido, { decimals: 1 })} del presupuesto`}
+            hint={t.execDashboard.executedSpendHint(fmtPercent(consumido, { decimals: 1 }))}
             icon={Banknote}
             delta={{
-              value: `${fmtPercent(consumido, { decimals: 1 })} consumido`,
+              value: `${fmtPercent(consumido, { decimals: 1 })} ${t.execDashboard.consumed}`,
               tone: consumido > project?.avance_global_percent! + 5 ? "warn" : "ok",
             }}
           />
           <KPICard
-            label="CPI básico"
+            label={t.execDashboard.basicCpi}
             value={project?.cpi != null ? fmtNumber(project.cpi, { decimals: 2 }) : "—"}
-            hint="Valor ganado / costo real"
+            hint={t.execDashboard.basicCpiHint}
             icon={Gauge}
             delta={{
               value: project?.cpi != null
-                ? project.cpi >= 1 ? "Sobre presupuesto" : "Bajo presupuesto"
-                : "Sin datos",
+                ? project.cpi >= 1 ? t.execDashboard.underBudget : t.execDashboard.overBudget
+                : t.execDashboard.noData,
               tone: cpiTone,
             }}
           />
           <KPICard
-            label="SPI básico"
+            label={t.execDashboard.basicSpi}
             value={project?.spi != null ? fmtNumber(project.spi, { decimals: 2 }) : "—"}
-            hint="Avance real / avance planeado"
+            hint={t.execDashboard.basicSpiHint}
             icon={TrendingUp}
             delta={{
               value: project?.spi != null
-                ? project.spi >= 1 ? "En tiempo" : "Atrasado"
-                : "Sin datos",
+                ? project.spi >= 1 ? t.execDashboard.onTime : t.execDashboard.delayed
+                : t.execDashboard.noData,
               tone: spiTone,
             }}
           />
@@ -130,40 +133,40 @@ export default async function ProjectDashboard({
 
         <section aria-label="Énfasis en insumos críticos" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KPICard
-            label="Alertas de insumos críticos"
+            label={t.execDashboard.criticalAlerts}
             value={String(totals.insumos_criticos_alerta)}
-            hint="Insumos críticos con disponibilidad escasa, agotada o descontinuada"
+            hint={t.execDashboard.criticalAlertsHint}
             icon={AlertOctagon}
             delta={{
-              value: totals.insumos_criticos_alerta > 0 ? "Acción inmediata" : "Sin alertas",
+              value: totals.insumos_criticos_alerta > 0 ? t.execDashboard.immediateAction : t.execDashboard.noAlerts,
               tone: totals.insumos_criticos_alerta > 0 ? "risk" : "ok",
             }}
           />
           <KPICard
-            label="Exposición crítica"
+            label={t.execDashboard.criticalExposure}
             value={fmtCOP(totals.exposicion_critica)}
-            hint="Presupuesto APU dependiente de insumos críticos en alerta"
+            hint={t.execDashboard.criticalExposureHint}
             icon={PackageSearch}
             delta={{
               value: totals.presupuesto_total > 0
-                ? `${fmtPercent((totals.exposicion_critica / totals.presupuesto_total) * 100, { decimals: 1 })} del total`
+                ? `${fmtPercent((totals.exposicion_critica / totals.presupuesto_total) * 100, { decimals: 1 })} ${t.execDashboard.ofTotal}`
                 : "—",
               tone: totals.exposicion_critica > 0 ? "warn" : "neutral",
             }}
           />
           <KPICard
-            label="OC prioritarias"
+            label={t.execDashboard.priorityOc}
             value={fmtCOP(totals.ordenes_prioritarias)}
-            hint="Órdenes con al menos un insumo crítico"
+            hint={t.execDashboard.priorityOcHint}
             icon={Wallet}
           />
           <KPICard
-            label="Incidentes abiertos"
+            label={t.execDashboard.openIncidents}
             value={String(totals.incidentes_abiertos)}
-            hint="Incluye observaciones y no conformidades"
+            hint={t.execDashboard.openIncidentsHint}
             icon={CircleAlert}
             delta={{
-              value: totals.incidentes_abiertos > 0 ? "Pendiente cierre" : "Al día",
+              value: totals.incidentes_abiertos > 0 ? t.execDashboard.immediateAction : t.execDashboard.upToDate,
               tone: totals.incidentes_abiertos > 0 ? "warn" : "ok",
             }}
           />
@@ -173,47 +176,47 @@ export default async function ProjectDashboard({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="font-display text-2xl text-ink">
-                Riesgo por variación de precios
+                {t.execDashboard.priceRiskTitle}
               </h2>
               <p className="text-sm text-ink-soft">
-                Compara precios monitoreados contra APU de onboarding.
+                {t.execDashboard.priceRiskSubtitle}
               </p>
             </div>
           </div>
 
           <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <KPICard
-              label="Sobrecosto proyectado"
+              label={t.execDashboard.projectedOverrun}
               value={fmtCOP(priceRisk.projectedAdditionalCost)}
-              hint="Impacto adicional por alzas detectadas"
+              hint={t.execDashboard.additionalImpact}
               icon={TriangleAlert}
               delta={{
-                value: `${fmtPercent(priceRisk.projectedOverrunPercent, { decimals: 1 })} del presupuesto`,
+                value: `${fmtPercent(priceRisk.projectedOverrunPercent, { decimals: 1 })} ${t.execDashboard.ofBudget}`,
                 tone: overrunTone,
               }}
             />
             <KPICard
-              label="Presupuesto proyectado"
+              label={t.execDashboard.projectedBudget}
               value={fmtCOP(priceRisk.projectedBudget)}
-              hint="Presupuesto APU + sobrecosto por insumos"
+              hint={t.execDashboard.budgetPlusOverrun}
               icon={Wallet}
             />
             <KPICard
-              label="Insumos en riesgo"
+              label={t.execDashboard.suppliesAtRisk}
               value={String(priceRisk.suppliesAtRisk)}
-              hint={`${priceRisk.criticalSupplies} críticos por alza >=10%`}
+              hint={`${priceRisk.criticalSupplies} ${t.execDashboard.criticalHike}`}
               icon={Siren}
               delta={{
-                value: `${String(priceRisk.changedSupplies)} con cambio de precio`,
+                value: `${String(priceRisk.changedSupplies)} ${t.execDashboard.withPriceChange}`,
                 tone: overrunTone,
               }}
             />
             <KPICard
-              label="Última carga"
-              value={priceRisk.lastUpdateDate ? fmtDate(priceRisk.lastUpdateDate) : "—"}
+              label={t.execDashboard.lastLoad}
+              value={priceRisk.lastUpdateDate ? fmtDate(priceRisk.lastUpdateDate, t.locale) : "—"}
               hint={priceRisk.hasPriceUpdates
                 ? `Base afectada ${fmtCOPCompact(priceRisk.affectedBudget)}`
-                : "Aún no hay lotes cargados"}
+                : t.execDashboard.noBatchesLoaded}
               icon={TrendingUp}
             />
           </section>
@@ -299,17 +302,17 @@ export default async function ProjectDashboard({
                   id="alertas-criticas"
                   className="font-display text-xl text-ink"
                 >
-                  Alertas activas de insumos críticos
+                  {t.execDashboard.activeAlertsTitle}
                 </h2>
                 <p className="mt-0.5 text-xs text-ink-soft">
-                  Generadas automáticamente cuando un insumo crítico cambia su disponibilidad.
+                  {t.execDashboard.activeAlertsSubtitle}
                 </p>
               </div>
               <Link
                 href={`/dashboard/proyectos/${projectId}/insumos`}
                 className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline"
               >
-                Ver catálogo
+                {t.execDashboard.viewCatalog}
                 <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
               </Link>
             </header>
@@ -320,7 +323,7 @@ export default async function ProjectDashboard({
                   aria-hidden="true"
                   className="mx-auto mb-3 h-8 w-8 text-status-ok"
                 />
-                Sin alertas activas. Todos los insumos críticos están disponibles.
+                {t.execDashboard.noActiveAlerts}
               </div>
             ) : (
               <ul className="divide-y divide-line">
@@ -340,12 +343,12 @@ export default async function ProjectDashboard({
                       </div>
                       <p className="mt-1 text-xs text-ink-muted">{a.mensaje}</p>
                       <p className="mt-1 text-[11px] text-ink-soft">
-                        Abierta desde {fmtDate(a.abierta_desde)}
+                        {t.execDashboard.openedSince} {fmtDate(a.abierta_desde, t.locale)}
                       </p>
                     </div>
                     <div className="text-right">
                       <p className="text-[11px] uppercase tracking-[0.14em] text-ink-soft">
-                        Exposición
+                        {t.execDashboard.exposure}
                       </p>
                       <p className="mt-1 font-mono text-sm text-ink">
                         {fmtCOPCompact(a.exposicion)}
@@ -367,16 +370,16 @@ export default async function ProjectDashboard({
                   id="top-criticos"
                   className="font-display text-xl text-ink"
                 >
-                  Top insumos críticos por exposición
+                  {t.execDashboard.topCriticalTitle}
                 </h2>
                 <p className="mt-0.5 text-xs text-ink-soft">
-                  Mayor impacto presupuestal si fallan.
+                  {t.execDashboard.topCriticalSubtitle}
                 </p>
               </div>
             </header>
             {topCriticalSupplies.length === 0 ? (
               <p className="px-5 py-10 text-center text-sm text-ink-muted">
-                Aún no hay insumos marcados como críticos.
+                {t.execDashboard.noCriticalSupplies}
               </p>
             ) : (
               <ul className="divide-y divide-line">
@@ -431,28 +434,28 @@ export default async function ProjectDashboard({
                 id="resumen-financiero"
                 className="font-display text-xl text-ink"
               >
-                Resumen financiero
+                {t.execDashboard.financialSummaryTitle}
               </h2>
               <p className="mt-0.5 text-xs text-ink-soft">
-                Desagregación rápida del gasto del proyecto.
+                {t.execDashboard.financialSummarySubtitle}
               </p>
             </div>
             <Link
               href={`/dashboard/proyectos/${projectId}/costos`}
               className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline"
             >
-              Ver detalle de costos
+              {t.execDashboard.viewCostDetail}
               <ArrowUpRight className="h-3 w-3" aria-hidden="true" />
             </Link>
           </header>
 
           <dl className="grid gap-px bg-line sm:grid-cols-3">
-            <FinanceCell label="Saldo a proveedores" value={fmtCOP(totals.saldo_por_pagar)} hint="Pagos pendientes" />
-            <FinanceCell label="Nómina pagada" value={fmtCOP(totals.nomina_pagada)} hint="Total neto por periodo" />
+            <FinanceCell label={t.execDashboard.balanceToSuppliers} value={fmtCOP(totals.saldo_por_pagar)} hint={t.execDashboard.pendingPayments} />
+            <FinanceCell label={t.execDashboard.paidPayroll} value={fmtCOP(totals.nomina_pagada)} hint={t.execDashboard.netTotalPerPeriod} />
             <FinanceCell
-              label="Avance ponderado"
+              label={t.execDashboard.weightedProgress}
               value={fmtPercent(totals.avance, { decimals: 1 })}
-              hint="Promedio ponderado por presupuesto"
+              hint={t.execDashboard.weightedByBudget}
             />
           </dl>
         </section>
@@ -473,13 +476,13 @@ function FinanceCell({ label, value, hint }: { label: string; value: string; hin
   );
 }
 
-function prettyStatus(s: string): string {
+function prettyStatus(s: string, t: any): string {
   const map: Record<string, string> = {
-    planificacion: "Planificación",
-    en_ejecucion: "En ejecución",
-    pausado: "Pausado",
-    finalizado: "Finalizado",
-    cancelado: "Cancelado",
+    planificacion: t.wizard.statusPlanning,
+    en_ejecucion: t.wizard.statusExecution,
+    pausado: t.wizard.statusPaused,
+    finalizado: t.wizard.statusFinished,
+    cancelado: t.wizard.statusCancelled,
   };
   return map[s] ?? s;
 }

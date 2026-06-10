@@ -412,6 +412,7 @@ def create_project_with_bootstrap(
     fecha_fin_planeada = payload.get("fecha_fin_planeada")
     fecha_inicio_real = payload.get("fecha_inicio_real")
     presupuesto_total = safe_money(payload.get("presupuesto_total"))
+    idioma = str(payload.get("idioma") or "en").strip()
     input_batch_id = str(payload.get("input_batch_id") or "").strip() or None
 
     with conn.cursor() as cur:
@@ -420,9 +421,9 @@ def create_project_with_bootstrap(
             insert into projects (
               nombre, descripcion, ubicacion, estado,
               fecha_inicio_planeada, fecha_fin_planeada, fecha_inicio_real,
-              presupuesto_total
+              presupuesto_total, idioma
             )
-            values (%s, %s, %s, %s, %s, %s, %s, %s)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             returning id
             """,
             (
@@ -434,6 +435,7 @@ def create_project_with_bootstrap(
                 fecha_fin_planeada,
                 fecha_inicio_real,
                 presupuesto_total,
+                idioma,
             ),
         )
         row = cur.fetchone()

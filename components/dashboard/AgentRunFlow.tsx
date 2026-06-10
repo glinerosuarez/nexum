@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Bot, CheckCircle2, Loader2, TriangleAlert } from "lucide-react";
+import { useTranslation } from "@/lib/i18n/client";
 import { fmtCOP, fmtDate, fmtNumber, fmtPercent } from "@/lib/format";
 
 interface AgentSnapshot {
@@ -73,6 +74,7 @@ export function AgentRunFlow({
   shouldAutoRun?: boolean;
   normalizedSupplyCount?: number;
 }) {
+  const t = useTranslation();
   const [state, setState] = useState<RunState>({
     phase: shouldAutoRun ? "running" : "done",
     snapshot: null,
@@ -136,14 +138,14 @@ export function AgentRunFlow({
   const snapshot = state.snapshot;
   const desviacion = getDesviacion(snapshot);
   const runLabel = !snapshot?.last_run_status
-    ? "Sin corrida"
+    ? t.agent.noRun
     : snapshot.last_run_status === "completed"
-      ? "Corrida completada"
+      ? t.agent.runOk
       : snapshot.last_run_status === "partial"
-        ? "Corrida parcial"
+        ? t.agent.runPartial
         : snapshot.last_run_status === "failed"
-          ? "Corrida fallida"
-          : "Corrida finalizada";
+          ? t.agent.runFailed
+          : t.agent.runFinished;
 
   if (state.phase === "running") {
     return (
@@ -153,13 +155,13 @@ export function AgentRunFlow({
             <span className="absolute inset-0 animate-ping rounded-full border border-ink/20" />
             <Bot className="h-7 w-7 text-ink" aria-hidden="true" />
           </span>
-          <h2 className="font-display text-3xl text-ink">Llamando al agente de insumos críticos</h2>
+          <h2 className="font-display text-3xl text-ink">{t.agent.title}</h2>
           <p className="mt-2 text-sm text-ink-muted">
-            Estamos monitoreando precios, corriendo forecast y evaluando riesgo de sobrecostos.
+            {t.agent.description}
           </p>
           <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-line bg-canvas px-4 py-2 text-sm text-ink-soft">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            Procesando información del proyecto...
+            {t.agent.processing}
           </div>
         </div>
       </section>
@@ -174,37 +176,38 @@ export function AgentRunFlow({
           {runLabel}
         </p>
         <p className="mt-2 text-xs text-ink-soft">
-          Inicio {fmtDate(snapshot?.last_run_started_at ?? null)} · Fin{" "}
-          {fmtDate(snapshot?.last_run_finished_at ?? null)}
+          {t.agent.start} {fmtDate(snapshot?.last_run_started_at ?? null, t.locale)} · {t.agent.end}{" "}
+          {fmtDate(snapshot?.last_run_finished_at ?? null, t.locale)}
         </p>
       </div>
 
       {!shouldAutoRun ? (
         <div className="rounded-xl border border-status-warn/30 bg-status-warn/10 px-3 py-2 text-sm text-status-warn">
-          No ejecutamos el agente automáticamente porque este proyecto no tiene insumos normalizados persistidos.
-          Detectados: {normalizedSupplyCount}.
+          {t.agent.noAutoRun}
+          <br />
+          {t.agent.detected}: {normalizedSupplyCount}.
         </div>
       ) : null}
 
       {state.phase === "error" ? (
         <div className="rounded-xl border border-status-warn/30 bg-status-warn/10 px-3 py-2 text-xs text-status-warn">
-          No pudimos completar la corrida automáticamente: {state.detail}
+          {t.agent.autoRunFailed} {state.detail}
         </div>
       ) : null}
 
       <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <MetricCell label="Insumos objetivo" value={fmtNumber(snapshot?.supplies_targeted, { decimals: 0 })} />
-        <MetricCell label="Scrape OK" value={fmtNumber(snapshot?.supplies_scraped_ok, { decimals: 0 })} />
-        <MetricCell label="Scrape fallidos" value={fmtNumber(snapshot?.supplies_scraped_failed, { decimals: 0 })} />
-        <MetricCell label="Puntos forecast" value={fmtNumber(snapshot?.forecast_points_written, { decimals: 0 })} />
-        <MetricCell label="Alertas disparadas" value={fmtNumber(snapshot?.alerts_triggered, { decimals: 0 })} />
+        <MetricCell label={t.agent.suppliesTargeted} value={fmtNumber(snapshot?.supplies_targeted, { decimals: 0 })} />
+        <MetricCell label={t.agent.scrapeOk} value={fmtNumber(snapshot?.supplies_scraped_ok, { decimals: 0 })} />
+        <MetricCell label={t.agent.scrapeFailed} value={fmtNumber(snapshot?.supplies_scraped_failed, { decimals: 0 })} />
+        <MetricCell label={t.agent.forecastPoints} value={fmtNumber(snapshot?.forecast_points_written, { decimals: 0 })} />
+        <MetricCell label={t.agent.alertsTriggered} value={fmtNumber(snapshot?.alerts_triggered, { decimals: 0 })} />
       </dl>
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <MetricCell label="Budget base" value={fmtCOP(snapshot?.baseline_budget)} />
-        <MetricCell label="Costo proyectado" value={fmtCOP(snapshot?.projected_total_cost)} />
+        <MetricCell label={t.agent.baselineBudget} value={fmtCOP(snapshot?.baseline_budget)} />
+        <MetricCell label={t.agent.projectedCost} value={fmtCOP(snapshot?.projected_total_cost)} />
         <MetricCell
-          label="Desviación"
+          label={t.agent.deviation}
           value={`${fmtSignedCOP(desviacion.amount)} · ${fmtSignedPercent(desviacion.pct)}`}
         />
       </div>
@@ -212,7 +215,7 @@ export function AgentRunFlow({
       {snapshot?.error_summary ? (
         <p className="inline-flex items-center gap-2 rounded-xl border border-status-warn/30 bg-status-warn/10 px-3 py-2 text-xs text-status-warn">
           <TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />
-          Último error: {snapshot.error_summary}
+          {t.agent.lastError}: {snapshot.error_summary}
         </p>
       ) : null}
 
@@ -221,7 +224,7 @@ export function AgentRunFlow({
           href={`/dashboard/proyectos/${projectId}?created=1`}
           className="inline-flex h-11 items-center justify-center rounded-full bg-ink px-6 text-sm font-medium text-canvas transition-colors hover:bg-[#1a1a1c]"
         >
-          Aceptar
+          {t.agent.accept}
         </Link>
       </div>
     </section>

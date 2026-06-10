@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import { useProjects } from "./ProjectContext";
 
+import { useTranslation } from "@/lib/i18n/client";
+
 interface NavItem {
   href: string;
   label: string;
@@ -24,6 +26,7 @@ interface NavItem {
 export function Sidebar() {
   const pathname = usePathname();
   const projects = useProjects();
+  const t = useTranslation();
 
   const projectMatch = pathname.match(
     /^\/dashboard\/proyectos\/([0-9a-fA-F-]{36})(?:\/.*)?$/,
@@ -36,9 +39,9 @@ export function Sidebar() {
   const carteraItems: NavItem[] = [
     {
       href: "/dashboard/proyectos",
-      label: "Proyectos",
+      label: t.sidebar.projects,
       icon: FolderKanban,
-      description: `${projects.length} en cartera`,
+      description: t.sidebar.projectsInPortfolio(projects.length),
     },
   ];
 
@@ -46,27 +49,27 @@ export function Sidebar() {
     ? [
         {
           href: `/dashboard/proyectos/${currentProjectId}`,
-          label: "Vista ejecutiva",
+          label: t.sidebar.executiveView,
           icon: LayoutDashboard,
-          description: "KPIs y alertas",
+          description: t.sidebar.kpisAndAlerts,
         },
         {
           href: `/dashboard/proyectos/${currentProjectId}/insumos`,
-          label: "Insumos críticos",
+          label: t.sidebar.criticalSupplies,
           icon: PackageSearch,
-          description: "Catálogo y disponibilidad",
+          description: t.sidebar.catalogAndAvailability,
         },
         {
           href: `/dashboard/proyectos/${currentProjectId}/costos`,
-          label: "Costos",
+          label: t.sidebar.costs,
           icon: Wallet,
-          description: "Presupuesto y gasto",
+          description: t.sidebar.budgetAndSpend,
         },
         {
           href: `/dashboard/proyectos/${currentProjectId}/chat`,
-          label: "Chat",
+          label: t.sidebar.chat,
           icon: MessageSquare,
-          description: "Consulta tus datos",
+          description: t.sidebar.queryYourData,
         },
       ]
     : [];
@@ -101,7 +104,7 @@ export function Sidebar() {
       <div className="flex flex-1 flex-col overflow-y-auto">
         <section className="p-3">
           <p className="px-2 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-soft">
-            Cartera
+            {t.sidebar.portfolio}
           </p>
           <ul className="space-y-1">
             {carteraItems.map((item) => (
@@ -121,7 +124,7 @@ export function Sidebar() {
                 }`}
               >
                 <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                Nuevo proyecto
+                {t.sidebar.newProject}
               </Link>
             </li>
           </ul>
@@ -132,13 +135,13 @@ export function Sidebar() {
             <div className="mb-2 flex items-start justify-between gap-2 px-2 pt-1">
               <div className="min-w-0">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-soft">
-                  Proyecto seleccionado
+                  {t.sidebar.projectScope}
                 </p>
                 <p
                   className="mt-1 truncate text-[13px] font-medium leading-tight text-ink"
-                  title={currentProject?.nombre ?? "Proyecto"}
+                  title={currentProject?.nombre ?? t.sidebar.noProjectActive}
                 >
-                  {currentProject?.nombre ?? "Proyecto"}
+                  {currentProject?.nombre ?? t.sidebar.noProjectActive}
                 </p>
               </div>
               <Link
@@ -162,13 +165,13 @@ export function Sidebar() {
         ) : (
           <section className="border-t border-line p-3">
             <div className="rounded-xl border border-dashed border-line bg-canvas p-3 text-xs text-ink-soft">
-              Selecciona un proyecto desde la cartera para ver su vista ejecutiva, insumos críticos, costos y chat.
+              {t.sidebar.selectProjectHint}
             </div>
           </section>
         )}
 
         <div className="mt-auto border-t border-line p-4 text-[11px] text-ink-soft">
-          Prototipo de hackathon v2.0
+          {t.sidebar.hackathonFooter}
         </div>
       </div>
     </aside>

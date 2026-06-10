@@ -55,11 +55,15 @@ export function fmtPercent(value: number | string | null | undefined, opts?: { d
   return `${n.toFixed(opts?.decimals ?? 1)}%`;
 }
 
-export function fmtDate(value: string | null | undefined): string {
+export function fmtDate(value: string | null | undefined, locale: string = "es-CO"): string {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
-  return dateFormat.format(date);
+  return new Intl.DateTimeFormat(locale, {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(date);
 }
 
 export function toNumber(value: number | string | null | undefined, fallback = 0): number {

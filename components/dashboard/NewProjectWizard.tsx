@@ -22,6 +22,7 @@ import {
   type ParsedPhase,
   type ShadowExtractionChunk,
 } from "@/lib/contract-parser";
+import { useTranslation } from "@/lib/i18n/client";
 
 const createInitial: CreateActionState = { ok: false, message: null };
 
@@ -31,6 +32,7 @@ const ACCEPTED_TYPES =
 const MAX_BYTES_PER_FILE = 32 * 1024 * 1024;
 
 export function NewProjectWizard() {
+  const t = useTranslation();
   const [createState, createFormAction] = useActionState(
     createProjectAction,
     createInitial,
@@ -142,11 +144,10 @@ export function NewProjectWizard() {
             <Upload className="h-5 w-5" />
           </span>
           <p className="mt-4 font-display text-lg text-ink">
-            Arrastra uno o varios contratos o haz clic para seleccionar
+            {t.wizard.filesTitle}
           </p>
           <p className="mt-1.5 text-sm text-ink-muted">
-            XML (MS Project) + APU (MD/CSV) + documentos. Mezclamos los datos
-            automáticamente.
+            {t.wizard.filesDesc}
           </p>
           <input
             id="contract"
@@ -204,11 +205,11 @@ export function NewProjectWizard() {
             className="inline-flex h-10 items-center gap-1.5 rounded-full px-3 text-sm text-ink-muted hover:text-ink"
           >
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-            Volver
+            {t.wizard.back}
           </Link>
           <div className="flex items-center gap-3">
             <span className="hidden text-xs text-ink-soft sm:inline">
-              El análisis y la persistencia ocurren en el servidor.
+              {t.wizard.serverAnalysisHint}
             </span>
             <button
               type="button"
@@ -222,13 +223,13 @@ export function NewProjectWizard() {
                 <Upload className="h-4 w-4" aria-hidden="true" />
               )}
               {parsing
-                ? "Analizando…"
-                : `Analizar ${files.length || ""} archivo${files.length === 1 ? "" : "s"}`}
+                ? t.wizard.analyzing
+                : t.wizard.analyzeBtn(files.length)}
             </button>
           </div>
         </div>
 
-        <FormatsCard />
+        <FormatsCard t={t} />
       </div>
     );
   }
@@ -242,59 +243,75 @@ export function NewProjectWizard() {
         filename={parsed.raw_filename}
         files={parsed.files}
         onReset={reset}
+        t={t}
       />
 
       <section className="grid gap-5 sm:grid-cols-2">
         <Field
-          label="Nombre del proyecto"
+          label={t.wizard.formName}
           name="nombre"
           defaultValue={parsed.nombre}
           required
           className="sm:col-span-2"
         />
+        <div className="space-y-1.5 sm:col-span-2">
+          <label className="block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-soft">
+            {t.wizard.formLanguage}
+          </label>
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2 text-sm text-ink cursor-pointer">
+              <input type="radio" name="idioma" value="en" defaultChecked className="text-ink focus:ring-ink" />
+              {t.wizard.formLanguageEn}
+            </label>
+            <label className="flex items-center gap-2 text-sm text-ink cursor-pointer">
+              <input type="radio" name="idioma" value="es" className="text-ink focus:ring-ink" />
+              {t.wizard.formLanguageEs}
+            </label>
+          </div>
+        </div>
         <Field
-          label="Descripción"
+          label={t.wizard.formDesc}
           name="descripcion"
           defaultValue={parsed.descripcion ?? ""}
           className="sm:col-span-2"
         />
         <Field
-          label="Ubicación"
+          label={t.wizard.formLocation}
           name="ubicacion"
           defaultValue={parsed.ubicacion ?? ""}
         />
         <SelectField
-          label="Estado"
+          label={t.wizard.formStatus}
           name="estado"
           defaultValue="en_ejecucion"
           options={[
-            { value: "planificacion", label: "Planificación" },
-            { value: "en_ejecucion", label: "En ejecución" },
-            { value: "pausado", label: "Pausado" },
-            { value: "finalizado", label: "Finalizado" },
-            { value: "cancelado", label: "Cancelado" },
+            { value: "planificacion", label: t.wizard.statusPlanning },
+            { value: "en_ejecucion", label: t.wizard.statusExecution },
+            { value: "pausado", label: t.wizard.statusPaused },
+            { value: "finalizado", label: t.wizard.statusFinished },
+            { value: "cancelado", label: t.wizard.statusCancelled },
           ]}
         />
         <Field
-          label="Fecha de inicio planeada"
+          label={t.wizard.formStartDate}
           name="fecha_inicio_planeada"
           type="date"
           defaultValue={parsed.fecha_inicio_planeada ?? ""}
         />
         <Field
-          label="Fecha de fin planeada"
+          label={t.wizard.formEndDate}
           name="fecha_fin_planeada"
           type="date"
           defaultValue={parsed.fecha_fin_planeada ?? ""}
         />
         <Field
-          label="Fecha de inicio real"
+          label={t.wizard.formActualStartDate}
           name="fecha_inicio_real"
           type="date"
           defaultValue={parsed.fecha_inicio_real ?? ""}
         />
         <Field
-          label={`Presupuesto total${parsed.moneda ? ` (${parsed.moneda})` : " (COP)"}`}
+          label={`${t.wizard.formTotalBudget}${parsed.moneda ? ` (${parsed.moneda})` : " (COP)"}`}
           name="presupuesto_total"
           type="number"
           step="0.01"
@@ -307,7 +324,7 @@ export function NewProjectWizard() {
         />
       </section>
 
-      <PhasesEditor phases={phases} onChange={setPhases} />
+      <PhasesEditor phases={phases} onChange={setPhases} t={t} />
       <input type="hidden" name="phases_json" value={JSON.stringify(phases)} />
       <input type="hidden" name="input_batch_id" value={inputBatchId ?? ""} />
       <input
@@ -332,15 +349,15 @@ export function NewProjectWizard() {
           className="inline-flex h-10 items-center gap-1.5 rounded-full px-3 text-sm text-ink-muted hover:text-ink"
         >
           <RotateCcw className="h-4 w-4" aria-hidden="true" />
-          Subir otro archivo
+          {t.wizard.uploadAnother}
         </button>
-        <CreateSubmit />
+        <CreateSubmit t={t} />
       </div>
     </form>
   );
 }
 
-function CreateSubmit() {
+function CreateSubmit({ t }: { t: any }) {
   const { pending } = useFormStatus();
   return (
     <div className="flex flex-col items-end gap-1.5">
@@ -352,18 +369,18 @@ function CreateSubmit() {
         {pending ? (
           <>
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            Llamando al agente de insumos críticos...
+            {t.wizard.creating}
           </>
         ) : (
           <>
-            Crear proyecto
+            {t.wizard.createBtn}
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </>
         )}
       </button>
       {pending ? (
         <p className="text-xs text-ink-soft">
-          Esto puede tomar unos segundos mientras se calcula el riesgo de costos.
+          {t.wizard.calculatingRisk}
         </p>
       ) : null}
     </div>
@@ -376,6 +393,7 @@ function DetectionBanner({
   filename,
   files,
   onReset,
+  t,
 }: {
   source: string;
   confidence: string;
@@ -383,18 +401,9 @@ function DetectionBanner({
   filename: string;
   files?: { filename: string; source: string; confidence: string; contributed: string[] }[];
   onReset: () => void;
+  t: any;
 }) {
-  const sourceLabel: Record<string, string> = {
-    msproject_xml: "Microsoft Project (XML)",
-    apu_markdown: "APU (Markdown)",
-    csv: "CSV",
-    xlsx: "Excel (XLSX)",
-    markdown: "Markdown",
-    docx: "Documento Word",
-    pdf: "PDF",
-    image: "Imagen",
-    filename: "Archivo genérico",
-  };
+  const sourceLabel: Record<string, string> = t.wizard.sourceLabel;
   const confidenceTone =
     confidence === "alta"
       ? "bg-status-ok/10 text-status-ok"
@@ -414,15 +423,17 @@ function DetectionBanner({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-medium text-ink">
-              Datos detectados de {files?.length ?? 1} archivo{(files?.length ?? 1) === 1 ? "" : "s"}
+              {t.wizard.detectionTitle(files?.length ?? 1)}
             </p>
             <span
               className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${confidenceTone}`}
             >
-              Confianza {confidence}
+              {t.wizard.confidence} {t.wizard.confidenceValue[confidence] ?? confidence}
             </span>
           </div>
-          <p className="mt-1 truncate font-mono text-[11px] text-ink-soft">{filename}</p>
+          <p className="mt-1 truncate font-mono text-[11px] text-ink-soft">
+            {files?.length ? t.wizard.combinedFiles(files.length) : filename}
+          </p>
 
           {files && files.length > 0 ? (
             <ul className="mt-3 space-y-1.5">
@@ -439,8 +450,8 @@ function DetectionBanner({
                   </span>
                   <span className="text-ink-soft">
                     {f.contributed.length > 0
-                      ? `aporta: ${f.contributed.join(", ")}`
-                      : "sin aporte"}
+                      ? `${t.wizard.provides}: ${f.contributed.join(", ")}`
+                      : t.wizard.noContribution}
                   </span>
                 </li>
               ))}
@@ -450,7 +461,7 @@ function DetectionBanner({
           {notes.length > 0 ? (
             <details className="mt-3 text-xs text-ink-muted">
               <summary className="cursor-pointer text-ink-soft hover:text-ink">
-                Ver notas de extracción ({notes.length})
+                {t.wizard.viewExtractionNotes(notes.length)}
               </summary>
               <ul className="mt-2 space-y-0.5">
                 {notes.map((n, i) => (
@@ -465,7 +476,7 @@ function DetectionBanner({
           onClick={onReset}
           className="text-xs text-ink-muted hover:text-ink"
         >
-          Cambiar
+          {t.wizard.changeFiles}
         </button>
       </div>
     </div>
@@ -475,9 +486,11 @@ function DetectionBanner({
 function PhasesEditor({
   phases,
   onChange,
+  t,
 }: {
   phases: ParsedPhase[];
   onChange: (next: ParsedPhase[]) => void;
+  t: any;
 }) {
   function updatePhase(idx: number, nombre: string) {
     const next = phases.slice();
@@ -505,11 +518,9 @@ function PhasesEditor({
     <section className="rounded-2xl border border-line bg-canvas-raised p-5">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h3 className="font-display text-lg text-ink">Fases del proyecto</h3>
+          <h3 className="font-display text-lg text-ink">{t.wizard.phasesTitle}</h3>
           <p className="mt-0.5 text-xs text-ink-soft">
-            {phases.length > 0
-              ? `${phases.length} fase${phases.length === 1 ? "" : "s"} detectada${phases.length === 1 ? "" : "s"}. Edítalas si es necesario.`
-              : "No detectamos fases. Puedes agregarlas manualmente."}
+            {t.wizard.phasesDesc(phases.length)}
           </p>
         </div>
         <button
@@ -517,7 +528,7 @@ function PhasesEditor({
           onClick={addPhase}
           className="inline-flex h-9 items-center justify-center gap-1.5 rounded-full border border-line bg-canvas px-3 text-xs font-medium text-ink hover:border-ink/30"
         >
-          + Agregar fase
+          {t.wizard.addPhaseBtn}
         </button>
       </div>
 
@@ -534,7 +545,7 @@ function PhasesEditor({
               <input
                 value={ph.nombre}
                 onChange={(e) => updatePhase(idx, e.target.value)}
-                placeholder="Nombre de la fase"
+                placeholder={t.wizard.phaseNamePlaceholder}
                 className="col-span-7 h-9 rounded-lg border border-transparent bg-transparent px-2 text-sm text-ink outline-none focus:border-line focus:bg-canvas-raised"
               />
               <span className="col-span-3 text-right font-mono text-[11px] text-ink-soft">
@@ -632,31 +643,29 @@ function SelectField({
   );
 }
 
-function FormatsCard() {
+function FormatsCard({ t }: { t: any }) {
   const items = [
     {
       ext: "XML",
-      label:
-        "Microsoft Project — extracción rica de nombre, fechas, presupuesto y fases.",
+      label: t.wizard.formatXmlDesc,
     },
     {
       ext: "CSV",
-      label:
-        "Detección por columnas: nombre, ubicación, fechas, presupuesto, fases.",
+      label: t.wizard.formatCsvDesc,
     },
     {
       ext: "DOCX",
-      label: "Documento Word — completarás los campos manualmente.",
+      label: t.wizard.formatDocxDesc,
     },
-    { ext: "PDF", label: "Contrato PDF — completarás los campos manualmente." },
+    { ext: "PDF", label: t.wizard.formatPdfDesc },
     {
       ext: "IMG",
-      label: "PNG/JPG/WEBP — usamos el nombre del archivo como referencia.",
+      label: t.wizard.formatImgDesc,
     },
   ];
   return (
     <div className="rounded-2xl border border-dashed border-line bg-canvas-raised p-5">
-      <h3 className="font-display text-lg text-ink">Formatos soportados</h3>
+      <h3 className="font-display text-lg text-ink">{t.wizard.supportedFormats}</h3>
       <ul className="mt-4 grid gap-3 text-sm text-ink-muted sm:grid-cols-2">
         {items.map((i) => (
           <li key={i.ext} className="flex items-start gap-3">

@@ -1,6 +1,7 @@
 import { Topbar } from "@/components/dashboard/Topbar";
 import { AgentRunFlow } from "@/components/dashboard/AgentRunFlow";
 import { getProjectBasic, getSupplySelectionInputs } from "@/lib/dashboard-data";
+import { getDictionary } from "@/lib/i18n/server";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,7 @@ interface AgentRunPageProps {
 
 export default async function AgentRunPage({ params }: AgentRunPageProps) {
   const { id: projectId } = await params;
+  const t = await getDictionary(projectId);
   const [project, selectionInputs] = await Promise.all([
     getProjectBasic(projectId),
     getSupplySelectionInputs(projectId).catch(() => null),
@@ -22,15 +24,15 @@ export default async function AgentRunPage({ params }: AgentRunPageProps) {
   return (
     <>
       <Topbar
-        title={project?.nombre ?? "Proyecto"}
-        subtitle="Ejecuta el agente de insumos críticos para calcular forecast y riesgo de costos."
+        title={project?.nombre ?? t.sidebar.noProjectActive}
+        subtitle={t.agent.topbarSubtitle}
       />
       <div className="space-y-6 px-5 py-8 sm:px-8">
         <div
           role="status"
           className="rounded-2xl border border-status-ok/30 bg-status-ok/5 px-4 py-3 text-sm text-status-ok"
         >
-          Proyecto creado correctamente.
+          {t.proyectos.createdOk}
         </div>
         <AgentRunFlow
           projectId={projectId}

@@ -10,6 +10,7 @@ import { Topbar } from "@/components/dashboard/Topbar";
 import { DeleteProjectButton } from "@/components/dashboard/DeleteProjectButton";
 import { listProjects } from "@/lib/dashboard-data";
 import { fmtCOPCompact, fmtDate, fmtPercent } from "@/lib/format";
+import { getDictionary } from "@/lib/i18n/server";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +21,7 @@ interface ProyectosPageProps {
 export default async function ProyectosPage({ searchParams }: ProyectosPageProps) {
   const { created, deleted, denied } = await searchParams;
   const projects = await listProjects();
+  const t = await getDictionary();
 
   const presupuestoTotal = projects.reduce(
     (acc, p) => acc + p.presupuesto_total,
@@ -31,8 +33,8 @@ export default async function ProyectosPage({ searchParams }: ProyectosPageProps
   return (
     <>
       <Topbar
-        title="Proyectos"
-        subtitle={`${projects.length} proyecto${projects.length === 1 ? "" : "s"} en cartera · ${enEjecucion} en ejecución`}
+        title={t.proyectos.title}
+        subtitle={t.proyectos.subtitle(projects.length, enEjecucion)}
       />
 
       <div className="space-y-8 px-5 py-8 sm:px-8">
@@ -41,7 +43,7 @@ export default async function ProyectosPage({ searchParams }: ProyectosPageProps
             role="status"
             className="rounded-2xl border border-status-ok/30 bg-status-ok/5 px-4 py-3 text-sm text-status-ok"
           >
-            Proyecto creado correctamente.
+            {t.proyectos.createdOk}
           </div>
         ) : null}
         {deleted ? (
@@ -49,7 +51,7 @@ export default async function ProyectosPage({ searchParams }: ProyectosPageProps
             role="status"
             className="rounded-2xl border border-ink/20 bg-ink/[0.04] px-4 py-3 text-sm text-ink"
           >
-            Proyecto eliminado.
+            {t.proyectos.deletedOk}
           </div>
         ) : null}
         {denied ? (
@@ -57,20 +59,20 @@ export default async function ProyectosPage({ searchParams }: ProyectosPageProps
             role="status"
             className="rounded-2xl border border-status-warn/30 bg-status-warn/10 px-4 py-3 text-sm text-status-warn"
           >
-            No tienes acceso al proyecto solicitado.
+            {t.proyectos.accessDenied}
           </div>
         ) : null}
 
         <section className="grid gap-4 sm:grid-cols-3">
-          <SummaryTile label="Proyectos activos" value={String(enEjecucion)} hint={`de ${projects.length} en cartera`} />
-          <SummaryTile label="Presupuesto total" value={fmtCOPCompact(presupuestoTotal)} hint="Sumatoria de la cartera" />
+          <SummaryTile label={t.proyectos.activeProjects} value={String(enEjecucion)} hint={t.proyectos.ofTotal(projects.length)} />
+          <SummaryTile label={t.proyectos.totalBudget} value={fmtCOPCompact(presupuestoTotal)} hint={t.proyectos.portfolioSum} />
           <SummaryTile
-            label="Gasto ejecutado"
+            label={t.proyectos.actualSpend}
             value={fmtCOPCompact(gastoTotal)}
             hint={
               presupuestoTotal > 0
-                ? `${fmtPercent((gastoTotal / presupuestoTotal) * 100, { decimals: 1 })} del presupuesto total`
-                : "—"
+                ? `${fmtPercent((gastoTotal / presupuestoTotal) * 100, { decimals: 1 })} ${t.proyectos.ofTotalBudget}`
+                : t.proyectos.noData
             }
           />
         </section>
@@ -78,9 +80,9 @@ export default async function ProyectosPage({ searchParams }: ProyectosPageProps
         <section className="rounded-2xl border border-line bg-canvas-raised">
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-4">
             <div>
-              <h2 className="font-display text-xl text-ink">Cartera de proyectos</h2>
+              <h2 className="font-display text-xl text-ink">{t.proyectos.portfolioHeader}</h2>
               <p className="mt-0.5 text-xs text-ink-soft">
-                Selecciona un proyecto para ver su vista ejecutiva.
+                {t.proyectos.portfolioDesc}
               </p>
             </div>
             <Link
@@ -88,12 +90,12 @@ export default async function ProyectosPage({ searchParams }: ProyectosPageProps
               className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-ink px-4 text-sm font-medium text-canvas transition-colors hover:bg-[#1a1a1c]"
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
-              Nuevo proyecto
+              {t.proyectos.newProjectBtn}
             </Link>
           </header>
 
           {projects.length === 0 ? (
-            <EmptyState />
+            <EmptyState t={t} />
           ) : (
             <ul className="divide-y divide-line">
               {projects.map((p) => {
@@ -150,7 +152,7 @@ export default async function ProyectosPage({ searchParams }: ProyectosPageProps
                             tone={p.avance < 50 ? "warn" : "ok"}
                           />
                           <Metric
-                            label="Consumido"
+                            label={t.proyectos.consumed}
                             value={fmtPercent(consumido, { decimals: 0 })}
                             tone={consumido > 100 ? "risk" : consumido > 85 ? "warn" : "neutral"}
                           />
@@ -185,23 +187,22 @@ export default async function ProyectosPage({ searchParams }: ProyectosPageProps
   );
 }
 
-function EmptyState() {
+function EmptyState({ t }: { t: any }) {
   return (
     <div className="flex flex-col items-center px-5 py-16 text-center">
       <span className="mb-4 grid h-12 w-12 place-items-center rounded-2xl border border-line bg-canvas text-ink-soft">
         <FolderKanban className="h-5 w-5" aria-hidden="true" />
       </span>
-      <p className="font-display text-xl text-ink">Aún no hay proyectos</p>
+      <p className="font-display text-xl text-ink">{t.proyectos.emptyStateTitle}</p>
       <p className="mt-1 max-w-sm text-sm text-ink-muted">
-        Carga un contrato (XML de Project, CSV, DOCX, PDF o imagen) y Nexum
-        extrae la información para crear tu primer proyecto.
+        {t.proyectos.emptyStateDesc}
       </p>
       <Link
         href="/dashboard/proyectos/nuevo"
         className="mt-6 inline-flex h-10 items-center justify-center gap-2 rounded-full bg-ink px-4 text-sm font-medium text-canvas hover:bg-[#1a1a1c]"
       >
         <Plus className="h-4 w-4" aria-hidden="true" />
-        Cargar contrato
+        {t.proyectos.newProjectBtn}
       </Link>
     </div>
   );

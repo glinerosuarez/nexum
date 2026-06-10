@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { Loader2, Trash2 } from "lucide-react";
+import { useTranslation } from "@/lib/i18n/client";
 import {
   deleteProjectAction,
   type DeleteActionState,
@@ -14,6 +15,7 @@ interface DeleteProjectButtonProps {
   projectId: string;
   projectName: string;
   variant?: "ghost" | "danger";
+  t?: any;
 }
 
 export function DeleteProjectButton({
@@ -21,6 +23,7 @@ export function DeleteProjectButton({
   projectName,
   variant = "ghost",
 }: DeleteProjectButtonProps) {
+  const t = useTranslation();
   const [open, setOpen] = useState(false);
   const [state, formAction] = useActionState(deleteProjectAction, initial);
   const [confirm, setConfirm] = useState("");
@@ -40,10 +43,10 @@ export function DeleteProjectButton({
           setOpen(true);
         }}
         className={triggerClass}
-        aria-label={`Eliminar proyecto ${projectName}`}
+        aria-label={`${t.delete.deleteProject} ${projectName}`}
       >
         <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-        {variant === "danger" ? "Eliminar proyecto" : "Eliminar"}
+        {variant === "danger" ? t.delete.deleteProject : t.delete.delete}
       </button>
 
       {open ? (
@@ -69,13 +72,12 @@ export function DeleteProjectButton({
                   id="delete-title"
                   className="font-display text-lg text-ink"
                 >
-                  Eliminar proyecto
+                  {t.delete.deleteProject}
                 </h3>
                 <p className="mt-1 text-sm text-ink-muted">
-                  Esta acción eliminará permanentemente el proyecto{" "}
-                  <span className="font-medium text-ink">{projectName}</span> y
-                  todos sus datos relacionados (fases, OC, pagos, nómina,
-                  incidentes, bitácora).
+                  {t.delete.deleteWarning1}{" "}
+                  <span className="font-medium text-ink">{projectName}</span>{" "}
+                  {t.delete.deleteWarning2}
                 </p>
               </div>
             </div>
@@ -88,7 +90,7 @@ export function DeleteProjectButton({
                 htmlFor="confirm_name"
                 className="block text-[11px] font-medium uppercase tracking-[0.14em] text-ink-soft"
               >
-                Escribe el nombre del proyecto para confirmar
+                {t.delete.typeToConfirm}
               </label>
               <input
                 id="confirm_name"
@@ -115,9 +117,9 @@ export function DeleteProjectButton({
                   onClick={() => setOpen(false)}
                   className="inline-flex h-10 items-center justify-center rounded-full px-4 text-sm text-ink-muted hover:text-ink"
                 >
-                  Cancelar
+                  {t.delete.cancel}
                 </button>
-                <DeleteSubmit disabled={confirm !== projectName} />
+                <DeleteSubmit disabled={confirm !== projectName} t={t} />
               </div>
             </form>
           </div>
@@ -127,7 +129,7 @@ export function DeleteProjectButton({
   );
 }
 
-function DeleteSubmit({ disabled }: { disabled: boolean }) {
+function DeleteSubmit({ disabled, t }: { disabled: boolean; t: any }) {
   const { pending } = useFormStatus();
   return (
     <button
@@ -140,7 +142,7 @@ function DeleteSubmit({ disabled }: { disabled: boolean }) {
       ) : (
         <Trash2 className="h-4 w-4" aria-hidden="true" />
       )}
-      Eliminar definitivamente
+      {t.delete.deletePermanently}
     </button>
   );
 }

@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from nexum_api.app import (
     _is_valid_stage_transition,
+    _mcp_url,
     app,
     resolve_principal,
 )
@@ -63,6 +64,22 @@ class TestSupplyAgentStageTransitions(unittest.TestCase):
         self.assertFalse(_is_valid_stage_transition("forecasting", "selecting_targets"))
         self.assertFalse(_is_valid_stage_transition("completed", "failed"))
         self.assertFalse(_is_valid_stage_transition("failed", "completed"))
+
+
+class TestSupplyAgentMcpUrlNormalization(unittest.TestCase):
+    def test_appends_mcp_to_bare_service_url(self):
+        with patch.dict("os.environ", {"SUPPLY_AGENT_MCP_URL": "https://mcp-fca-hackaton-xhlpjxjnva-uc.a.run.app"}):
+            self.assertEqual(
+                _mcp_url(),
+                "https://mcp-fca-hackaton-xhlpjxjnva-uc.a.run.app/mcp",
+            )
+
+    def test_keeps_explicit_mcp_path(self):
+        with patch.dict("os.environ", {"SUPPLY_AGENT_MCP_URL": "https://mcp-fca-hackaton-xhlpjxjnva-uc.a.run.app/mcp"}):
+            self.assertEqual(
+                _mcp_url(),
+                "https://mcp-fca-hackaton-xhlpjxjnva-uc.a.run.app/mcp",
+            )
 
 
 class TestSupplyAgentRunEndpointContract(unittest.TestCase):

@@ -1,9 +1,12 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
+import { getDictionary } from "@/lib/i18n/server";
 
 export const dynamic = "force-static";
 
-export default function Home() {
+export default async function Home() {
+  const t = await getDictionary();
+
   return (
     <main className="relative flex min-h-screen flex-col">
       <div
@@ -38,14 +41,14 @@ export default function Home() {
           href="/login?next=/dashboard/proyectos"
           className="text-sm text-ink-muted transition-colors hover:text-ink"
         >
-          Iniciar sesión →
+          {t.landing.loginArrow}
         </Link>
       </header>
 
       <section className="mx-auto flex w-full max-w-3xl flex-1 flex-col items-center justify-center px-6 py-16 text-center sm:px-8">
         <span className="eyebrow mb-7">
           <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
-          Construcción · Colombia
+          {t.landing.eyebrow}
         </span>
 
         <h1 className="font-display text-display-xl text-ink">
@@ -53,22 +56,24 @@ export default function Home() {
         </h1>
 
         <p className="mt-6 max-w-xl text-lg leading-relaxed text-ink-muted sm:text-xl">
-          Plataforma PMO para constructoras. Controla{" "}
-          <span className="text-ink">costos</span> y{" "}
-          <span className="text-ink">criticidad de insumos</span> en una sola vista.
+          {t.landing.description.split(t.landing.costs)[0]}
+          <span className="text-ink">{t.landing.costs}</span>
+          {t.landing.description.split(t.landing.costs)[1].split(t.landing.supplyCriticality)[0]}
+          <span className="text-ink">{t.landing.supplyCriticality}</span>
+          {t.landing.description.split(t.landing.supplyCriticality)[1]}
         </p>
 
         <Link
           href="/login?next=/dashboard/proyectos"
           className="mt-10 inline-flex h-12 items-center justify-center gap-2 rounded-full bg-ink px-7 text-[15px] font-medium text-canvas transition-colors hover:bg-[#1a1a1c]"
         >
-          Iniciar sesión
+          {t.landing.login}
           <ArrowRight className="h-4 w-4" aria-hidden="true" />
         </Link>
       </section>
 
       <footer className="mx-auto w-full max-w-5xl border-t border-line px-6 py-6 text-center text-xs text-ink-soft sm:px-8">
-        © {new Date().getFullYear()} Nexum Project · Prototipo de hackathon
+        {t.landing.footer(new Date().getFullYear())}
       </footer>
     </main>
   );

@@ -7,6 +7,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -96,7 +97,13 @@ def _mcp_required() -> bool:
 
 
 def _mcp_url() -> str:
-    return (os.getenv("SUPPLY_AGENT_MCP_URL") or "").strip()
+    raw = (os.getenv("SUPPLY_AGENT_MCP_URL") or "").strip()
+    if not raw:
+        return ""
+    parsed = urlsplit(raw)
+    if parsed.scheme and parsed.netloc and parsed.path in {"", "/"}:
+        return urlunsplit((parsed.scheme, parsed.netloc, "/mcp", parsed.query, parsed.fragment))
+    return raw
 
 
 def _mcp_bearer() -> str | None:
@@ -529,6 +536,7 @@ def _project_summary_row(conn, project_id: str) -> dict[str, Any] | None:
               m.project_id as id,
               m.project_nombre as nombre,
               m.estado,
+              p.idioma,
               coalesce(m.avance_global_percent, 0) as avance_global_percent,
               m.avance_planeado_percent,
               coalesce(m.presupuesto_total, 0) as presupuesto_total,
@@ -537,6 +545,7 @@ def _project_summary_row(conn, project_id: str) -> dict[str, Any] | None:
               m.cpi_basico as cpi,
               coalesce(m.incidentes_abiertos, 0) as incidentes_abiertos
             from management_report_data m
+            join projects p on p.id = m.project_id
             where m.project_id = %s
             limit 1
             """,
@@ -855,6 +864,7 @@ class ProjectCreateRequest(BaseModel):
     fecha_fin_planeada: str | None = None
     fecha_inicio_real: str | None = None
     presupuesto_total: float = 0
+    idioma: str = "en"
     input_batch_id: str | None = None
     phases: list[PhaseInput] = Field(default_factory=list)
 
@@ -1469,6 +1479,7 @@ def list_projects(request: Request, principal: Principal = Depends(resolve_princ
                       p.fecha_fin_planeada,
                       p.fecha_inicio_real,
                       p.created_at,
+                      p.idioma,
                       coalesce(m.presupuesto_total, p.presupuesto_total, 0) as presupuesto_total,
                       coalesce(m.gasto_ejecutado, 0) as gasto_ejecutado,
                       coalesce(m.avance_global_percent, 0) as avance,
@@ -1535,7 +1546,7 @@ def project_basic(project_id: str, principal: Principal = Depends(resolve_princi
         profile_id = _coerce_profile(conn, principal)
         _assert_project_access(conn, profile_id, project_id)
         with conn.cursor() as cur:
-            cur.execute("select id, nombre from projects where id = %s", (project_id,))
+            cur.execute("select id, nombre, idioma from projects where id = %s", (project_id,))
             row = cur.fetchone()
         conn.commit()
         return {"project": row}

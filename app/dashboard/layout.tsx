@@ -31,6 +31,7 @@ export default async function DashboardLayout({
   const choices = projects.map((p) => ({
     id: p.id,
     nombre: p.nombre,
+    idioma: p.idioma,
   }));
 
   return (

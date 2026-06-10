@@ -5,6 +5,7 @@ import { createContext, useContext, type ReactNode } from "react";
 export interface ProjectChoice {
   id: string;
   nombre: string;
+  idioma: string;
 }
 
 const ProjectsCtx = createContext<ProjectChoice[]>([]);

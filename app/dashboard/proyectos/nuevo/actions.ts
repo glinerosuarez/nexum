@@ -85,6 +85,7 @@ export async function createProjectAction(
           fecha_fin_planeada: asDate(formData.get("fecha_fin_planeada")),
           fecha_inicio_real: asDate(formData.get("fecha_inicio_real")),
           presupuesto_total: asNumber(formData.get("presupuesto_total")) ?? 0,
+          idioma: (formData.get("idioma") ?? "en").toString(),
           input_batch_id: inputBatchId,
           phases,
         },

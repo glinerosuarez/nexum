@@ -5,6 +5,7 @@ export interface ProjectSummary {
   id: string;
   nombre: string;
   estado: string;
+  idioma: string;
   avance_global_percent: number;
   avance_planeado_percent: number | null;
   presupuesto_total: number;
@@ -125,6 +126,7 @@ export interface ProjectListRow {
   fecha_inicio_planeada: string | null;
   fecha_fin_planeada: string | null;
   fecha_inicio_real: string | null;
+  idioma: string;
   presupuesto_total: number;
   gasto_ejecutado: number;
   avance: number;
@@ -183,6 +185,7 @@ export interface CostsData {
 export interface ProjectBasic {
   id: string;
   nombre: string;
+  idioma: string;
 }
 
 export interface SupplySelectionInputDocument {
