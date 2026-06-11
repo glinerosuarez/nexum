@@ -6,9 +6,10 @@ import { useTranslation } from "@/lib/i18n/client";
 
 interface ProjectionCurveProps {
   data: CurveData | null;
+  compact?: boolean;
 }
 
-export function ProjectionCurve({ data }: ProjectionCurveProps) {
+export function ProjectionCurve({ data, compact = false }: ProjectionCurveProps) {
   const t = useTranslation();
   if (!data || data.points.length < 2) {
     return (
@@ -27,9 +28,11 @@ export function ProjectionCurve({ data }: ProjectionCurveProps) {
 
   const { points, presupuesto_total, ev_total, spi, cpi, hoy, fecha_inicio, fecha_fin } = data;
 
-  const width = 880;
-  const height = 320;
-  const padding = { top: 32, right: 28, bottom: 44, left: 76 };
+  const width = compact ? 720 : 880;
+  const height = compact ? 250 : 320;
+  const padding = compact
+    ? { top: 24, right: 22, bottom: 40, left: 64 }
+    : { top: 32, right: 28, bottom: 44, left: 76 };
   const innerW = width - padding.left - padding.right;
   const innerH = height - padding.top - padding.bottom;
 
@@ -70,16 +73,16 @@ export function ProjectionCurve({ data }: ProjectionCurveProps) {
 
   return (
     <section className="rounded-2xl border border-line bg-canvas-raised">
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-4">
+      <header className={`flex flex-wrap items-start justify-between gap-3 border-b border-line ${compact ? "px-4 py-3" : "px-5 py-4"}`}>
         <div>
-          <h2 className="font-display text-xl text-ink">
+          <h2 className={`font-display text-ink ${compact ? "text-lg" : "text-xl"}`}>
             {t.execDashboard.projectionCurveTitle}
           </h2>
           <p className="mt-0.5 text-xs text-ink-soft">
             {t.execDashboard.projectionCurveSubtitle(fmtDate(fecha_inicio, t.locale), fmtDate(fecha_fin, t.locale))}
           </p>
         </div>
-        <dl className="grid grid-cols-3 gap-x-6 text-right text-xs">
+        <dl className={`grid grid-cols-3 text-right text-xs ${compact ? "gap-x-4" : "gap-x-6"}`}>
           <div>
             <dt className="text-ink-soft">{t.execDashboard.cptpToDate}</dt>
             <dd className="mt-0.5 font-mono text-sm text-ink">
@@ -102,13 +105,13 @@ export function ProjectionCurve({ data }: ProjectionCurveProps) {
         </dl>
       </header>
 
-      <div className="px-5 py-6">
+      <div className={compact ? "px-4 py-4" : "px-5 py-6"}>
         <div className="overflow-x-auto">
           <svg
             viewBox={`0 0 ${width} ${height}`}
             role="img"
             aria-label={t.execDashboard.projectionCurveAria}
-            className="block w-full min-w-[560px]"
+            className={`block w-full ${compact ? "min-w-[460px]" : "min-w-[560px]"}`}
           >
             {ticks.map((t, i) => (
               <g key={`y-${i}`}>
@@ -226,7 +229,7 @@ export function ProjectionCurve({ data }: ProjectionCurveProps) {
           </svg>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-5 text-xs">
+        <div className={`flex flex-wrap items-center text-xs ${compact ? "mt-3 gap-4" : "mt-4 gap-5"}`}>
           <LegendDot color="#0B0B0C" label={t.execDashboard.cptpLegend} />
           <LegendDot color="#B45309" label={t.execDashboard.cptrLegend} />
           <LegendDot

@@ -85,6 +85,103 @@ export default async function ProjectDashboard({
         }
       : null,
   ].filter(Boolean) as Array<{ label: string; value: string; hint: string }>;
+  const executiveCards = [
+    <KPICard
+      key="budget"
+      label={t.execDashboard.budgetApu}
+      value={fmtCOP(totals.presupuesto_total)}
+      hint={t.execDashboard.budgetApuHint}
+      icon={Wallet}
+      highlight
+    />,
+    showExecutedSpend ? (
+      <KPICard
+        key="executed"
+        label={t.execDashboard.executedSpend}
+        value={fmtCOP(totals.gasto_ejecutado)}
+        hint={t.execDashboard.executedSpendHint(fmtPercent(consumido, { decimals: 1 }))}
+        icon={Banknote}
+        delta={{
+          value: `${fmtPercent(consumido, { decimals: 1 })} ${t.execDashboard.consumed}`,
+          tone: consumido > project?.avance_global_percent! + 5 ? "warn" : "ok",
+        }}
+      />
+    ) : null,
+    showCpi ? (
+      <KPICard
+        key="cpi"
+        label={t.execDashboard.basicCpi}
+        value={fmtNumber(cpiValue, { decimals: 2 })}
+        hint={t.execDashboard.basicCpiHint}
+        icon={Gauge}
+        delta={{
+          value: cpiValue! >= 1 ? t.execDashboard.underBudget : t.execDashboard.overBudget,
+          tone: cpiTone,
+        }}
+      />
+    ) : null,
+    <KPICard
+      key="spi"
+      label={t.execDashboard.basicSpi}
+      value={project?.spi != null ? fmtNumber(project.spi, { decimals: 2 }) : "—"}
+      hint={t.execDashboard.basicSpiHint}
+      icon={TrendingUp}
+      delta={{
+        value: project?.spi != null
+          ? project.spi >= 1 ? t.execDashboard.onTime : t.execDashboard.delayed
+          : t.execDashboard.noData,
+        tone: spiTone,
+      }}
+    />,
+    <KPICard
+      key="critical-alerts"
+      label={t.execDashboard.criticalAlerts}
+      value={String(totals.insumos_criticos_alerta)}
+      hint={t.execDashboard.criticalAlertsHint}
+      icon={AlertOctagon}
+      delta={{
+        value: totals.insumos_criticos_alerta > 0 ? t.execDashboard.immediateAction : t.execDashboard.noAlerts,
+        tone: totals.insumos_criticos_alerta > 0 ? "risk" : "ok",
+      }}
+    />,
+    showCriticalExposure ? (
+      <KPICard
+        key="critical-exposure"
+        label={t.execDashboard.criticalExposure}
+        value={fmtCOP(totals.exposicion_critica)}
+        hint={t.execDashboard.criticalExposureHint}
+        icon={PackageSearch}
+        delta={{
+          value: totals.presupuesto_total > 0
+            ? `${fmtPercent((totals.exposicion_critica / totals.presupuesto_total) * 100, { decimals: 1 })} ${t.execDashboard.ofTotal}`
+            : "—",
+          tone: "warn",
+        }}
+      />
+    ) : null,
+    showPriorityPos ? (
+      <KPICard
+        key="priority-pos"
+        label={t.execDashboard.priorityOc}
+        value={fmtCOP(totals.ordenes_prioritarias)}
+        hint={t.execDashboard.priorityOcHint}
+        icon={Wallet}
+      />
+    ) : null,
+    showOpenIncidents ? (
+      <KPICard
+        key="incidents"
+        label={t.execDashboard.openIncidents}
+        value={String(totals.incidentes_abiertos)}
+        hint={t.execDashboard.openIncidentsHint}
+        icon={CircleAlert}
+        delta={{
+          value: t.execDashboard.immediateAction,
+          tone: "warn",
+        }}
+      />
+    ) : null,
+  ].filter(Boolean);
 
   return (
     <>
@@ -123,97 +220,13 @@ export default async function ProjectDashboard({
             />
           ) : null}
         </div>
-        <section aria-label="KPIs ejecutivos" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <KPICard
-            label={t.execDashboard.budgetApu}
-            value={fmtCOP(totals.presupuesto_total)}
-            hint={t.execDashboard.budgetApuHint}
-            icon={Wallet}
-            highlight
-          />
-          {showExecutedSpend ? (
-            <KPICard
-              label={t.execDashboard.executedSpend}
-              value={fmtCOP(totals.gasto_ejecutado)}
-              hint={t.execDashboard.executedSpendHint(fmtPercent(consumido, { decimals: 1 }))}
-              icon={Banknote}
-              delta={{
-                value: `${fmtPercent(consumido, { decimals: 1 })} ${t.execDashboard.consumed}`,
-                tone: consumido > project?.avance_global_percent! + 5 ? "warn" : "ok",
-              }}
-            />
-          ) : null}
-          {showCpi ? (
-            <KPICard
-              label={t.execDashboard.basicCpi}
-              value={fmtNumber(cpiValue, { decimals: 2 })}
-              hint={t.execDashboard.basicCpiHint}
-              icon={Gauge}
-              delta={{
-                value: cpiValue! >= 1 ? t.execDashboard.underBudget : t.execDashboard.overBudget,
-                tone: cpiTone,
-              }}
-            />
-          ) : null}
-          <KPICard
-            label={t.execDashboard.basicSpi}
-            value={project?.spi != null ? fmtNumber(project.spi, { decimals: 2 }) : "—"}
-            hint={t.execDashboard.basicSpiHint}
-            icon={TrendingUp}
-            delta={{
-              value: project?.spi != null
-                ? project.spi >= 1 ? t.execDashboard.onTime : t.execDashboard.delayed
-                : t.execDashboard.noData,
-              tone: spiTone,
-            }}
-          />
-        </section>
-
-        <section aria-label="Énfasis en insumos críticos" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <KPICard
-            label={t.execDashboard.criticalAlerts}
-            value={String(totals.insumos_criticos_alerta)}
-            hint={t.execDashboard.criticalAlertsHint}
-            icon={AlertOctagon}
-            delta={{
-              value: totals.insumos_criticos_alerta > 0 ? t.execDashboard.immediateAction : t.execDashboard.noAlerts,
-              tone: totals.insumos_criticos_alerta > 0 ? "risk" : "ok",
-            }}
-          />
-          {showCriticalExposure ? (
-            <KPICard
-              label={t.execDashboard.criticalExposure}
-              value={fmtCOP(totals.exposicion_critica)}
-              hint={t.execDashboard.criticalExposureHint}
-              icon={PackageSearch}
-              delta={{
-                value: totals.presupuesto_total > 0
-                  ? `${fmtPercent((totals.exposicion_critica / totals.presupuesto_total) * 100, { decimals: 1 })} ${t.execDashboard.ofTotal}`
-                  : "—",
-                tone: "warn",
-              }}
-            />
-          ) : null}
-          {showPriorityPos ? (
-            <KPICard
-              label={t.execDashboard.priorityOc}
-              value={fmtCOP(totals.ordenes_prioritarias)}
-              hint={t.execDashboard.priorityOcHint}
-              icon={Wallet}
-            />
-          ) : null}
-          {showOpenIncidents ? (
-            <KPICard
-              label={t.execDashboard.openIncidents}
-              value={String(totals.incidentes_abiertos)}
-              hint={t.execDashboard.openIncidentsHint}
-              icon={CircleAlert}
-              delta={{
-                value: t.execDashboard.immediateAction,
-                tone: "warn",
-              }}
-            />
-          ) : null}
+        <section className="grid gap-6 xl:grid-cols-12">
+          <div className="grid gap-4 sm:grid-cols-2 xl:col-span-6">
+            {executiveCards}
+          </div>
+          <div className="xl:col-span-6">
+            <ProjectionCurve data={curva} compact />
+          </div>
         </section>
 
         {showPriceRiskSection ? (
@@ -335,8 +348,6 @@ export default async function ProjectDashboard({
           </section>
         ) : null}
 
-          <ProjectionCurve data={curva} />
-
           <div className="grid gap-6 lg:grid-cols-12">
           <section
             aria-labelledby="alertas-criticas"
@@ -383,7 +394,7 @@ export default async function ProjectDashboard({
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-medium text-ink">{a.nombre}</p>
+                        <p className="text-sm font-medium text-ink">{translateStubAlertName(a.nombre, t.locale)}</p>
                         <AvailabilityBadge value={a.disponibilidad} locale={t.locale} />
                         <SupplyTypeBadge type={a.tipo} locale={t.locale} />
                       </div>
@@ -529,4 +540,23 @@ function prettyStatus(s: string, t: any): string {
     cancelado: t.wizard.statusCancelled,
   };
   return map[s] ?? s;
+}
+
+function translateStubAlertName(name: string, locale: string): string {
+  if (!locale.toLowerCase().startsWith("en")) return name;
+  const normalized = name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
+
+  const exactMap: Record<string, string> = {
+    "HABITACIONES Y PASILLOS": "ROOMS AND CORRIDORS",
+    "ELEMENTOS ARQUITECTONICOS": "ARCHITECTURAL ELEMENTS",
+    "INSTALACIONES ELECTRICAS": "ELECTRICAL INSTALLATIONS",
+    "ILUMINACION": "LIGHTING",
+    "CARPINTERIA METALICA - ALUMINIO - PVC - VIDRIO - INOX": "METAL CARPENTRY - ALUMINUM - PVC - GLASS - STAINLESS",
+  };
+
+  return exactMap[normalized] ?? name;
 }
