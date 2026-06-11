@@ -349,10 +349,10 @@ export default async function ProjectDashboard({
           </section>
         ) : null}
 
-          <div className="grid gap-6 lg:grid-cols-12">
+          <div className="grid gap-6 xl:grid-cols-12">
           <section
             aria-labelledby="alertas-criticas"
-            className="rounded-2xl border border-line bg-canvas-raised lg:col-span-7"
+            className="rounded-2xl border border-line bg-canvas-raised xl:col-span-6"
           >
             <header className="flex items-center justify-between border-b border-line px-5 py-4">
               <div>
@@ -420,7 +420,7 @@ export default async function ProjectDashboard({
 
           <section
             aria-labelledby="top-criticos"
-            className="rounded-2xl border border-line bg-canvas-raised lg:col-span-5"
+            className="rounded-2xl border border-line bg-canvas-raised xl:col-span-6"
           >
             <header className="flex items-center justify-between border-b border-line px-5 py-4">
               <div>
@@ -452,7 +452,7 @@ export default async function ProjectDashboard({
                           <span className="font-mono text-[11px] text-ink-soft">
                             {String(idx + 1).padStart(2, "0")}
                           </span>
-                          <p className="truncate text-sm text-ink">{s.nombre}</p>
+                          <p className="truncate text-sm text-ink">{translateDemoSupplyName(s.nombre, t.locale)}</p>
                         </div>
                         <p className="font-mono text-sm text-ink">
                           {fmtCOPCompact(s.exposicion_presupuestal)}
@@ -544,6 +544,10 @@ function prettyStatus(s: string, t: any): string {
 }
 
 function translateStubAlertName(name: string, locale: string): string {
+  return translateDemoSupplyName(name, locale);
+}
+
+function translateDemoSupplyName(name: string, locale: string): string {
   if (!locale.toLowerCase().startsWith("en")) return name;
   const normalized = name
     .normalize("NFD")
@@ -561,5 +565,46 @@ function translateStubAlertName(name: string, locale: string): string {
       "HYDRONIC WALL FAN COIL YORK 220V 12,000 BTU WITH 3-WAY VALVE MODEL YHGW04CDT-M-RX",
   };
 
-  return exactMap[normalized] ?? name;
+  if (exactMap[normalized]) return exactMap[normalized];
+
+  const prefixMap: Array<[string, string]> = [
+    [
+      "S/I CIELO RASO EN LAMINA FIBROCEMENTO",
+      "Drywall ceiling in fiber cement board 6 mm. Includes structure and first-coat paint. Floors 5 and 4.",
+    ],
+    [
+      "S/I TABLERO ELECTRICO BIFASICO",
+      "Two-phase electrical panel for 12 circuits with space for totalizer. Includes breakers and accessories.",
+    ],
+    [
+      "S/I DIVISION PARA BANO EN VIDRIO TEMPLADO",
+      "Tempered glass bathroom partition E:8 mm. Includes door leaf, fixed panel, and hardware.",
+    ],
+    [
+      "S/I PARCIAL DESDE TABLEROS DE DISTRIBUCION DE PISO 5 HASTA TABLEROS DE HABITACIONES",
+      "Partial run from floor 5 distribution panels to room panels. Includes wiring and conduit.",
+    ],
+    [
+      "S/I PARCIAL DESDE TABLERO PRINCIPAL DE PISO 5 HASTA TABLEROS DE DISTRIBUCION DE TORRES A Y B",
+      "Partial run from floor 5 main panel to Towers A and B distribution panels. Includes wiring.",
+    ],
+    [
+      "S/I TABLERO ELECTRICO TRIFASICO",
+      "Three-phase electrical panel for 24 circuits with space for totalizer. Includes breakers and accessories.",
+    ],
+    [
+      "S/I PORCELANATO REF. CELLER IN&OUT",
+      "Porcelain tile ref. Celler in&out, 60x60 cm, white, Alfa brand, for rooms and bathroom areas.",
+    ],
+    [
+      "S/I ESTUCO Y PINTURA CIELO RASOS Y TECHOS 3MANOS",
+      "Stucco and paint for ceilings and roof slabs, 3 coats, including linear details and technical rooms.",
+    ],
+  ];
+
+  for (const [prefix, translation] of prefixMap) {
+    if (normalized.startsWith(prefix)) return translation;
+  }
+
+  return name;
 }
