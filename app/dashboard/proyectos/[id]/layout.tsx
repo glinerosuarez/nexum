@@ -1,4 +1,4 @@
-import { notFound, redirect } from "next/navigation";
+import { redirect } from "next/navigation";
 import { projectExists } from "@/lib/dashboard-data";
 import {
   isFirebaseAuthError,
@@ -29,10 +29,6 @@ export default async function ProjectLayout({
       redirect("/dashboard/proyectos?denied=1");
     }
     throw error;
-  }
-
-  if (!exists) {
-    notFound();
   }
 
   return <>{children}</>;
