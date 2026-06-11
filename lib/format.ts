@@ -1,14 +1,12 @@
 const cop = new Intl.NumberFormat("es-CO", {
   style: "currency",
   currency: "COP",
-  currencyDisplay: "code",
   maximumFractionDigits: 0,
 });
 
 const copCompact = new Intl.NumberFormat("es-CO", {
   style: "currency",
   currency: "COP",
-  currencyDisplay: "code",
   notation: "compact",
   maximumFractionDigits: 1,
 });
@@ -27,14 +25,14 @@ export function fmtCOP(value: number | string | null | undefined): string {
   if (value == null) return "—";
   const n = typeof value === "string" ? Number(value) : value;
   if (!Number.isFinite(n)) return "—";
-  return normalizeCop(cop.format(n));
+  return cop.format(n);
 }
 
 export function fmtCOPCompact(value: number | string | null | undefined): string {
   if (value == null) return "—";
   const n = typeof value === "string" ? Number(value) : value;
   if (!Number.isFinite(n)) return "—";
-  return normalizeCop(copCompact.format(n));
+  return copCompact.format(n).replace("COP", "").trim();
 }
 
 export function fmtNumber(value: number | string | null | undefined, opts?: { decimals?: number }): string {
@@ -72,8 +70,4 @@ export function toNumber(value: number | string | null | undefined, fallback = 0
   if (value == null) return fallback;
   const n = typeof value === "string" ? Number(value) : value;
   return Number.isFinite(n) ? n : fallback;
-}
-
-function normalizeCop(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
 }

@@ -171,6 +171,7 @@ export const en = {
     progressPrefix: "Progress",
     vsPlanned: "vs",
     planned: "planned",
+    currencyChip: "Currency: COP",
     noProjectHint: "Connect a project to see the executive KPIs.",
     budgetApu: "APU Budget",
     budgetApuHint: "Calculated from activities × supplies",

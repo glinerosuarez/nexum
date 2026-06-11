@@ -173,6 +173,7 @@ export const es: Dictionary = {
     progressPrefix: "Avance",
     vsPlanned: "vs",
     planned: "planeado",
+    currencyChip: "Moneda: COP",
     noProjectHint: "Conecta un proyecto para ver los KPIs ejecutivos.",
     budgetApu: "Presupuesto APU",
     budgetApuHint: "Calculado desde actividades × insumos",

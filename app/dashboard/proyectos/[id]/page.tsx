@@ -51,6 +51,40 @@ export default async function ProjectDashboard({
       : priceRisk.severity === "warn"
         ? "warn"
         : "ok";
+  const cpiValue = project?.cpi;
+  const showExecutedSpend = totals.gasto_ejecutado > 0;
+  const showCpi = cpiValue != null;
+  const showCriticalExposure = totals.exposicion_critica > 0;
+  const showPriorityPos = totals.ordenes_prioritarias > 0;
+  const showOpenIncidents = totals.incidentes_abiertos > 0;
+  const showPriceRiskSection =
+    priceRisk.hasPriceUpdates ||
+    priceRisk.topImpacts.length > 0 ||
+    priceRisk.projectedAdditionalCost > 0 ||
+    priceRisk.suppliesAtRisk > 0;
+  const financialCells = [
+    totals.saldo_por_pagar > 0
+      ? {
+          label: t.execDashboard.balanceToSuppliers,
+          value: fmtCOP(totals.saldo_por_pagar),
+          hint: t.execDashboard.pendingPayments,
+        }
+      : null,
+    totals.nomina_pagada > 0
+      ? {
+          label: t.execDashboard.paidPayroll,
+          value: fmtCOP(totals.nomina_pagada),
+          hint: t.execDashboard.netTotalPerPeriod,
+        }
+      : null,
+    totals.avance > 0
+      ? {
+          label: t.execDashboard.weightedProgress,
+          value: fmtPercent(totals.avance, { decimals: 1 }),
+          hint: t.execDashboard.weightedByBudget,
+        }
+      : null,
+  ].filter(Boolean) as Array<{ label: string; value: string; hint: string }>;
 
   return (
     <>
@@ -77,15 +111,18 @@ export default async function ProjectDashboard({
           </div>
         ) : null}
 
-        {project ? (
-          <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="inline-flex items-center rounded-full border border-line bg-canvas px-3 py-1 text-[11px] font-medium uppercase tracking-[0.14em] text-ink-soft">
+            {t.execDashboard.currencyChip}
+          </span>
+          {project ? (
             <DeleteProjectButton
               projectId={project.id}
               projectName={project.nombre}
               variant="danger"
             />
-          </div>
-        ) : null}
+          ) : null}
+        </div>
         <section aria-label="KPIs ejecutivos" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KPICard
             label={t.execDashboard.budgetApu}
@@ -94,28 +131,30 @@ export default async function ProjectDashboard({
             icon={Wallet}
             highlight
           />
-          <KPICard
-            label={t.execDashboard.executedSpend}
-            value={fmtCOP(totals.gasto_ejecutado)}
-            hint={t.execDashboard.executedSpendHint(fmtPercent(consumido, { decimals: 1 }))}
-            icon={Banknote}
-            delta={{
-              value: `${fmtPercent(consumido, { decimals: 1 })} ${t.execDashboard.consumed}`,
-              tone: consumido > project?.avance_global_percent! + 5 ? "warn" : "ok",
-            }}
-          />
-          <KPICard
-            label={t.execDashboard.basicCpi}
-            value={project?.cpi != null ? fmtNumber(project.cpi, { decimals: 2 }) : "—"}
-            hint={t.execDashboard.basicCpiHint}
-            icon={Gauge}
-            delta={{
-              value: project?.cpi != null
-                ? project.cpi >= 1 ? t.execDashboard.underBudget : t.execDashboard.overBudget
-                : t.execDashboard.noData,
-              tone: cpiTone,
-            }}
-          />
+          {showExecutedSpend ? (
+            <KPICard
+              label={t.execDashboard.executedSpend}
+              value={fmtCOP(totals.gasto_ejecutado)}
+              hint={t.execDashboard.executedSpendHint(fmtPercent(consumido, { decimals: 1 }))}
+              icon={Banknote}
+              delta={{
+                value: `${fmtPercent(consumido, { decimals: 1 })} ${t.execDashboard.consumed}`,
+                tone: consumido > project?.avance_global_percent! + 5 ? "warn" : "ok",
+              }}
+            />
+          ) : null}
+          {showCpi ? (
+            <KPICard
+              label={t.execDashboard.basicCpi}
+              value={fmtNumber(cpiValue, { decimals: 2 })}
+              hint={t.execDashboard.basicCpiHint}
+              icon={Gauge}
+              delta={{
+                value: cpiValue! >= 1 ? t.execDashboard.underBudget : t.execDashboard.overBudget,
+                tone: cpiTone,
+              }}
+            />
+          ) : null}
           <KPICard
             label={t.execDashboard.basicSpi}
             value={project?.spi != null ? fmtNumber(project.spi, { decimals: 2 }) : "—"}
@@ -141,36 +180,43 @@ export default async function ProjectDashboard({
               tone: totals.insumos_criticos_alerta > 0 ? "risk" : "ok",
             }}
           />
-          <KPICard
-            label={t.execDashboard.criticalExposure}
-            value={fmtCOP(totals.exposicion_critica)}
-            hint={t.execDashboard.criticalExposureHint}
-            icon={PackageSearch}
-            delta={{
-              value: totals.presupuesto_total > 0
-                ? `${fmtPercent((totals.exposicion_critica / totals.presupuesto_total) * 100, { decimals: 1 })} ${t.execDashboard.ofTotal}`
-                : "—",
-              tone: totals.exposicion_critica > 0 ? "warn" : "neutral",
-            }}
-          />
-          <KPICard
-            label={t.execDashboard.priorityOc}
-            value={fmtCOP(totals.ordenes_prioritarias)}
-            hint={t.execDashboard.priorityOcHint}
-            icon={Wallet}
-          />
-          <KPICard
-            label={t.execDashboard.openIncidents}
-            value={String(totals.incidentes_abiertos)}
-            hint={t.execDashboard.openIncidentsHint}
-            icon={CircleAlert}
-            delta={{
-              value: totals.incidentes_abiertos > 0 ? t.execDashboard.immediateAction : t.execDashboard.upToDate,
-              tone: totals.incidentes_abiertos > 0 ? "warn" : "ok",
-            }}
-          />
+          {showCriticalExposure ? (
+            <KPICard
+              label={t.execDashboard.criticalExposure}
+              value={fmtCOP(totals.exposicion_critica)}
+              hint={t.execDashboard.criticalExposureHint}
+              icon={PackageSearch}
+              delta={{
+                value: totals.presupuesto_total > 0
+                  ? `${fmtPercent((totals.exposicion_critica / totals.presupuesto_total) * 100, { decimals: 1 })} ${t.execDashboard.ofTotal}`
+                  : "—",
+                tone: "warn",
+              }}
+            />
+          ) : null}
+          {showPriorityPos ? (
+            <KPICard
+              label={t.execDashboard.priorityOc}
+              value={fmtCOP(totals.ordenes_prioritarias)}
+              hint={t.execDashboard.priorityOcHint}
+              icon={Wallet}
+            />
+          ) : null}
+          {showOpenIncidents ? (
+            <KPICard
+              label={t.execDashboard.openIncidents}
+              value={String(totals.incidentes_abiertos)}
+              hint={t.execDashboard.openIncidentsHint}
+              icon={CircleAlert}
+              delta={{
+                value: t.execDashboard.immediateAction,
+                tone: "warn",
+              }}
+            />
+          ) : null}
         </section>
 
+        {showPriceRiskSection ? (
         <section aria-label="Riesgo por variación de precios" className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -287,6 +333,7 @@ export default async function ProjectDashboard({
             )}
           </article>
           </section>
+        ) : null}
 
           <ProjectionCurve data={curva} />
 
@@ -423,6 +470,7 @@ export default async function ProjectDashboard({
           </section>
         </div>
 
+        {financialCells.length > 0 ? (
         <section
           aria-labelledby="resumen-financiero"
           className="rounded-2xl border border-line bg-canvas-raised"
@@ -448,16 +496,13 @@ export default async function ProjectDashboard({
             </Link>
           </header>
 
-          <dl className="grid gap-px bg-line sm:grid-cols-3">
-            <FinanceCell label={t.execDashboard.balanceToSuppliers} value={fmtCOP(totals.saldo_por_pagar)} hint={t.execDashboard.pendingPayments} />
-            <FinanceCell label={t.execDashboard.paidPayroll} value={fmtCOP(totals.nomina_pagada)} hint={t.execDashboard.netTotalPerPeriod} />
-            <FinanceCell
-              label={t.execDashboard.weightedProgress}
-              value={fmtPercent(totals.avance, { decimals: 1 })}
-              hint={t.execDashboard.weightedByBudget}
-            />
+          <dl className={`grid gap-px bg-line ${financialCells.length === 1 ? "sm:grid-cols-1" : financialCells.length === 2 ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}>
+            {financialCells.map((cell) => (
+              <FinanceCell key={cell.label} label={cell.label} value={cell.value} hint={cell.hint} />
+            ))}
           </dl>
         </section>
+        ) : null}
       </div>
     </>
   );
