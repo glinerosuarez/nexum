@@ -399,7 +399,9 @@ export default async function ProjectDashboard({
                         <AvailabilityBadge value={a.disponibilidad} locale={t.locale} />
                         <SupplyTypeBadge type={a.tipo} locale={t.locale} />
                       </div>
-                      <p className="mt-1 text-xs text-ink-muted">{a.mensaje}</p>
+                      <p className="mt-1 text-xs text-ink-muted">
+                        {formatAlertMessage(a.mensaje, a.disponibilidad, t.locale)}
+                      </p>
                       <p className="mt-1 text-[11px] text-ink-soft">
                         {t.execDashboard.openedSince} {fmtDate(a.abierta_desde, t.locale)}
                       </p>
@@ -545,6 +547,21 @@ function prettyStatus(s: string, t: any): string {
 
 function translateStubAlertName(name: string, locale: string): string {
   return translateDemoSupplyName(name, locale);
+}
+
+function formatAlertMessage(message: string, availability: string, locale: string): string {
+  const normalized = message.trim().toLowerCase();
+  if (normalized === "no active row in supply_price_sources and no keyword match.") {
+    if (locale.toLowerCase().startsWith("en")) {
+      return availability === "escaso"
+        ? "This critical supply has been flagged as potentially scarce in this area."
+        : "This critical supply needs a monitored market source."
+    }
+    return availability === "escaso"
+      ? "Este insumo crítico fue marcado como potencialmente escaso en esta zona."
+      : "Este insumo crítico necesita una fuente de mercado monitoreada."
+  }
+  return message;
 }
 
 function translateDemoSupplyName(name: string, locale: string): string {
