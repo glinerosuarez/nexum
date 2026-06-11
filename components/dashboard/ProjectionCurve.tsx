@@ -64,7 +64,7 @@ export function ProjectionCurve({ data }: ProjectionCurveProps) {
   const todayX = todayIdx >= 0 ? x(points[todayIdx].fecha) : null;
 
   const ticks = makeYTicks(maxY, 4);
-  const xTicks = makeXTicks(points);
+  const xTicks = makeXTicks(points, t.locale);
 
   const presupuestoLineY = y(presupuesto_total);
 
@@ -107,7 +107,7 @@ export function ProjectionCurve({ data }: ProjectionCurveProps) {
           <svg
             viewBox={`0 0 ${width} ${height}`}
             role="img"
-            aria-label="Curva de proyección de costos en el tiempo"
+            aria-label={t.execDashboard.projectionCurveAria}
             className="block w-full min-w-[560px]"
           >
             {ticks.map((t, i) => (
@@ -170,7 +170,7 @@ export function ProjectionCurve({ data }: ProjectionCurveProps) {
               className="text-[10px]"
               style={{ fill: "#0B0B0C", fillOpacity: 0.55 }}
             >
-              Presupuesto · {fmtCOPCompact(presupuesto_total)}
+              {t.execDashboard.budgetLabel} · {fmtCOPCompact(presupuesto_total)}
             </text>
 
             {todayX != null ? (
@@ -190,7 +190,7 @@ export function ProjectionCurve({ data }: ProjectionCurveProps) {
                   className="text-[10px]"
                   style={{ fill: "#B45309" }}
                 >
-                  Hoy
+                  {t.execDashboard.todayLabel}
                 </text>
               </g>
             ) : null}
@@ -227,11 +227,11 @@ export function ProjectionCurve({ data }: ProjectionCurveProps) {
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-5 text-xs">
-          <LegendDot color="#0B0B0C" label="CPTP — Costo presupuestado del trabajo programado (PV)" />
-          <LegendDot color="#B45309" label="CPTR — Costo presupuestado del trabajo realizado (EV)" />
+          <LegendDot color="#0B0B0C" label={t.execDashboard.cptpLegend} />
+          <LegendDot color="#B45309" label={t.execDashboard.cptrLegend} />
           <LegendDot
             color="#0B0B0C"
-            label="Línea de presupuesto total"
+            label={t.execDashboard.totalBudgetLine}
             dashed
             muted
           />
@@ -281,11 +281,12 @@ function makeYTicks(max: number, count: number): number[] {
 
 function makeXTicks(
   points: { fecha: string }[],
+  locale: string,
 ): { iso: string; label: string }[] {
   if (points.length === 0) return [];
   const wanted = Math.min(6, points.length);
   const stride = Math.max(1, Math.floor((points.length - 1) / (wanted - 1 || 1)));
-  const labels = new Intl.DateTimeFormat("es-CO", {
+  const labels = new Intl.DateTimeFormat(locale, {
     month: "short",
     year: "2-digit",
   });
