@@ -202,7 +202,7 @@ export default async function InsumosPage({ params }: InsumosPageProps) {
                         <SupplyTypeBadge type={s.tipo} locale={locale} />
                       </td>
                       <td className="px-5 py-4">
-                        <CriticalityBadge critical={s.es_critico} />
+                        <CriticalityBadge critical={s.es_critico} locale={locale} />
                       </td>
                       <td className="px-5 py-4">
                         <AvailabilityBadge value={s.disponibilidad} locale={locale} />

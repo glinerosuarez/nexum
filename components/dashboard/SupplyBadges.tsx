@@ -70,21 +70,23 @@ export function AvailabilityBadge({ value, locale }: AvailabilityBadgeProps) {
 
 interface CriticalityBadgeProps {
   critical: boolean;
+  locale?: string;
 }
 
-export function CriticalityBadge({ critical }: CriticalityBadgeProps) {
+export function CriticalityBadge({ critical, locale }: CriticalityBadgeProps) {
+  const isEnglish = isEnglishLocale(locale);
   if (critical) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-ink px-2.5 py-0.5 text-[11px] font-medium text-canvas">
         <span aria-hidden="true" className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
-        Crítico
+        {isEnglish ? "Critical" : "Crítico"}
       </span>
     );
   }
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-canvas px-2.5 py-0.5 text-[11px] font-medium text-ink-muted">
       <span aria-hidden="true" className="inline-block h-1.5 w-1.5 rounded-full bg-ink-soft" />
-      Estándar
+      {isEnglish ? "Standard" : "Estándar"}
     </span>
   );
 }
