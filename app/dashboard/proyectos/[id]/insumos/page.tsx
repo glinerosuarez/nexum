@@ -6,8 +6,9 @@ import {
   SupplyTypeBadge,
 } from "@/components/dashboard/SupplyBadges";
 import { getDisplayAgentCounts } from "@/lib/agent-snapshot";
-import { getAgentOverrunSnapshot, getAllSupplies } from "@/lib/dashboard-data";
+import { getAgentOverrunSnapshot, getDashboardData } from "@/lib/dashboard-data";
 import { fmtCOP, fmtCOPCompact, fmtDate, fmtNumber, fmtPercent } from "@/lib/format";
+import { getDictionary } from "@/lib/i18n/server";
 
 export const dynamic = "force-dynamic";
 
@@ -15,72 +16,89 @@ interface InsumosPageProps {
   params: Promise<{ id: string }>;
 }
 
+type DemoCatalogRow = {
+  id: string;
+  nombre: string;
+  tipo: string;
+  unidad_medida: string;
+  precio_referencia: number;
+  precio_actual: number;
+  variacion_precio_pct: number;
+  fecha_precio_actualizacion: string | null;
+  disponibilidad: "disponible" | "escaso" | "agotado" | "descontinuado";
+  es_critico: boolean;
+  exposicion_presupuestal: number;
+  cantidad_planeada_total: number;
+  cantidad_ejecutada_total: number;
+  ordenes_pendientes: number;
+  proyectos_impactados: number;
+};
+
 export default async function InsumosPage({ params }: InsumosPageProps) {
   const { id: projectId } = await params;
-  const supplies = await getAllSupplies(projectId);
-  const agentSnapshot = await getAgentOverrunSnapshot(projectId);
-  const criticos = supplies.filter((s) => s.es_critico);
-  const enAlerta = supplies.filter(
-    (s) => s.es_critico && s.disponibilidad !== "disponible",
-  );
-  const exposicionCritica = criticos.reduce(
-    (acc, s) => acc + s.exposicion_presupuestal,
-    0,
-  );
+  const [dashboardData, agentSnapshot, t] = await Promise.all([
+    getDashboardData(projectId),
+    getAgentOverrunSnapshot(projectId),
+    getDictionary(projectId),
+  ]);
+  const { totals, alerts, topCriticalSupplies } = dashboardData;
+  const locale = t.locale;
+  const supplies = buildCatalogRows(alerts, topCriticalSupplies);
   const displayCounts = getDisplayAgentCounts(agentSnapshot);
   const desviacion = getDesviacion(agentSnapshot);
 
   return (
     <>
       <Topbar
-        title="Insumos críticos"
-        subtitle="Catálogo, exposición presupuestal, disponibilidad y variación de precios de mercado."
+        title="Critical supplies"
+        subtitle="Catalog, budget exposure, availability, and monitored market price variation."
       />
 
       <div className="space-y-8 px-5 py-8 sm:px-8">
         <section className="grid gap-4 sm:grid-cols-3">
           <SummaryTile
-            label="Insumos en catálogo"
+            label="Supplies in catalog"
             value={String(supplies.length)}
-            hint={`${criticos.length} marcados como críticos`}
+            hint={`${topCriticalSupplies.length} marked as critical`}
           />
           <SummaryTile
-            label="Críticos en alerta"
-            value={String(enAlerta.length)}
-            hint="Escasos, agotados o descontinuados"
-            tone={enAlerta.length > 0 ? "risk" : "ok"}
+            label="Critical in alert"
+            value={String(totals.insumos_criticos_alerta)}
+            hint="Scarce, exhausted, or discontinued"
+            tone={totals.insumos_criticos_alerta > 0 ? "risk" : "ok"}
           />
           <SummaryTile
-            label="Exposición presupuestal crítica"
-            value={fmtCOP(exposicionCritica)}
-            hint="Subtotal UPA dependiente de insumos críticos"
+            label="Critical budget exposure"
+            value={fmtCOP(totals.exposicion_critica)}
+            hint="UPA subtotal dependent on critical supplies"
           />
         </section>
 
         <section className="rounded-2xl border border-line bg-canvas-raised">
           <header className="border-b border-line px-5 py-4">
-            <h2 className="font-display text-xl text-ink">Agente de insumos críticos</h2>
+            <h2 className="font-display text-xl text-ink">Critical supplies agent</h2>
             <p className="mt-0.5 text-xs text-ink-soft">
-              Monitoreo automático de precios, forecast y alerta de sobrecostos.
+              Automatic monitoring of prices, forecast points, and cost-risk alerts.
             </p>
           </header>
 
           {!agentSnapshot || !agentSnapshot.last_run_id ? (
             <div className="px-5 py-5 text-sm text-ink-muted">
-              Aún no hay corrida registrada. Al crear o actualizar onboarding se dispara una corrida del agente.
+              No run has been recorded yet. Creating or updating onboarding triggers the agent automatically.
             </div>
           ) : (
             <div className="space-y-4 px-5 py-5">
               <div className="flex flex-wrap items-center gap-2">
                 <AgentRunStatusBadge status={agentSnapshot.last_run_status} />
                 <span className="text-xs text-ink-soft">
-                  Inicio {fmtDate(agentSnapshot.last_run_started_at)} · Fin {fmtDate(agentSnapshot.last_run_finished_at)}
+                  Start {fmtDate(agentSnapshot.last_run_started_at, locale)} · End{" "}
+                  {fmtDate(agentSnapshot.last_run_finished_at, locale)}
                 </span>
               </div>
 
               <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                 <MetricCell
-                  label="Insumos objetivo"
+                  label="Targeted supplies"
                   value={fmtNumber(agentSnapshot.supplies_targeted, { decimals: 0 })}
                 />
                 <MetricCell
@@ -88,30 +106,30 @@ export default async function InsumosPage({ params }: InsumosPageProps) {
                   value={fmtNumber(agentSnapshot.supplies_scraped_ok, { decimals: 0 })}
                 />
                 <MetricCell
-                  label="Scrape fallidos"
+                  label="Scrape failed"
                   value={fmtNumber(agentSnapshot.supplies_scraped_failed, { decimals: 0 })}
                 />
                 <MetricCell
-                  label="Puntos forecast"
+                  label="Forecast points"
                   value={fmtNumber(displayCounts.forecastPointsWritten, { decimals: 0 })}
                 />
                 <MetricCell
-                  label="Alertas disparadas"
+                  label="Alerts triggered"
                   value={fmtNumber(displayCounts.alertsTriggered, { decimals: 0 })}
                 />
               </dl>
 
               <div className="grid gap-3 sm:grid-cols-3">
                 <MetricCell
-                  label="Budget base"
+                  label="Baseline budget"
                   value={fmtCOP(agentSnapshot.baseline_budget)}
                 />
                 <MetricCell
-                  label="Costo proyectado"
+                  label="Projected cost"
                   value={fmtCOP(agentSnapshot.projected_total_cost)}
                 />
                 <MetricCell
-                  label="Desviación"
+                  label="Deviation"
                   value={`${fmtSignedCOP(desviacion.amount)} · ${fmtSignedPercent(desviacion.pct)}`}
                 />
               </div>
@@ -122,10 +140,9 @@ export default async function InsumosPage({ params }: InsumosPageProps) {
         <section className="rounded-2xl border border-line bg-canvas-raised">
           <header className="flex items-center justify-between gap-4 border-b border-line px-5 py-4">
             <div>
-              <h2 className="font-display text-xl text-ink">Catálogo</h2>
+              <h2 className="font-display text-xl text-ink">Catalog</h2>
               <p className="mt-0.5 text-xs text-ink-soft">
-                Los insumos críticos generan alertas automáticas y priorizan
-                líneas en órdenes de compra.
+                Critical supplies generate automatic alerts and prioritize purchase-order lines.
               </p>
             </div>
             <PackageSearch
@@ -138,16 +155,16 @@ export default async function InsumosPage({ params }: InsumosPageProps) {
             <table className="w-full min-w-[980px] text-left text-sm">
               <thead>
                 <tr className="border-b border-line text-[11px] font-medium uppercase tracking-[0.12em] text-ink-soft">
-                  <th scope="col" className="px-5 py-3">Insumo</th>
-                  <th scope="col" className="px-5 py-3">Tipo</th>
-                  <th scope="col" className="px-5 py-3">Criticidad</th>
-                  <th scope="col" className="px-5 py-3">Disponibilidad</th>
-                  <th scope="col" className="px-5 py-3 text-right">Precio ref.</th>
-                  <th scope="col" className="px-5 py-3 text-right">Precio mercado</th>
-                  <th scope="col" className="px-5 py-3 text-right">Variación</th>
-                  <th scope="col" className="px-5 py-3 text-right">Exposición</th>
-                  <th scope="col" className="px-5 py-3 text-right">Ejec. / plan.</th>
-                  <th scope="col" className="px-5 py-3 text-right">OC pendientes</th>
+                  <th scope="col" className="px-5 py-3">Supply</th>
+                  <th scope="col" className="px-5 py-3">Type</th>
+                  <th scope="col" className="px-5 py-3">Criticality</th>
+                  <th scope="col" className="px-5 py-3">Availability</th>
+                  <th scope="col" className="px-5 py-3 text-right">Base price</th>
+                  <th scope="col" className="px-5 py-3 text-right">Market price</th>
+                  <th scope="col" className="px-5 py-3 text-right">Variation</th>
+                  <th scope="col" className="px-5 py-3 text-right">Exposure</th>
+                  <th scope="col" className="px-5 py-3 text-right">Exec. / plan.</th>
+                  <th scope="col" className="px-5 py-3 text-right">Open POs</th>
                 </tr>
               </thead>
               <tbody>
@@ -167,26 +184,28 @@ export default async function InsumosPage({ params }: InsumosPageProps) {
                         <div className="flex items-start gap-2">
                           {isAlert ? (
                             <AlertOctagon
-                              aria-label="En alerta"
+                              aria-label="In alert"
                               className="mt-0.5 h-4 w-4 shrink-0 text-status-risk"
                             />
                           ) : null}
                           <div>
-                            <p className="font-medium text-ink">{s.nombre}</p>
+                            <p className="font-medium text-ink">
+                              {translateDemoSupplyName(s.nombre, locale)}
+                            </p>
                             <p className="text-[11px] text-ink-soft">
-                              Unidad: {s.unidad_medida}
+                              Unit: {s.unidad_medida}
                             </p>
                           </div>
                         </div>
                       </td>
                       <td className="px-5 py-4">
-                        <SupplyTypeBadge type={s.tipo} />
+                        <SupplyTypeBadge type={s.tipo} locale={locale} />
                       </td>
                       <td className="px-5 py-4">
                         <CriticalityBadge critical={s.es_critico} />
                       </td>
                       <td className="px-5 py-4">
-                        <AvailabilityBadge value={s.disponibilidad} />
+                        <AvailabilityBadge value={s.disponibilidad} locale={locale} />
                       </td>
                       <td className="px-5 py-4 text-right font-mono text-ink">
                         {fmtCOP(s.precio_referencia)}
@@ -195,8 +214,8 @@ export default async function InsumosPage({ params }: InsumosPageProps) {
                         {fmtCOP(s.precio_actual)}
                         <p className="text-[11px] font-sans text-ink-soft">
                           {s.fecha_precio_actualizacion
-                            ? fmtDate(s.fecha_precio_actualizacion)
-                            : "Sin carga"}
+                            ? fmtDate(s.fecha_precio_actualizacion, locale)
+                            : "No load"}
                         </p>
                       </td>
                       <td className="px-5 py-4 text-right">
@@ -217,7 +236,7 @@ export default async function InsumosPage({ params }: InsumosPageProps) {
                       <td className="px-5 py-4 text-right font-mono text-ink">
                         {fmtCOPCompact(s.exposicion_presupuestal)}
                         <p className="text-[11px] font-sans text-ink-soft">
-                          {s.proyectos_impactados} proyecto
+                          {s.proyectos_impactados} project
                           {s.proyectos_impactados === 1 ? "" : "s"}
                         </p>
                       </td>
@@ -228,8 +247,8 @@ export default async function InsumosPage({ params }: InsumosPageProps) {
                         </p>
                         <p className="text-[11px] text-ink-soft">
                           {s.cantidad_planeada_total > 0
-                            ? `${consumo.toFixed(0)}% ejecutado`
-                            : "Sin UPA"}
+                            ? `${consumo.toFixed(0)}% executed`
+                            : "No UPA"}
                         </p>
                       </td>
                       <td className="px-5 py-4 text-right font-mono text-ink">
@@ -245,36 +264,35 @@ export default async function InsumosPage({ params }: InsumosPageProps) {
 
         <section className="rounded-2xl border border-dashed border-line bg-canvas-raised p-6">
           <h3 className="font-display text-lg text-ink">
-            Reglas de criticidad
+            Criticality rules
           </h3>
           <ul className="mt-4 grid gap-3 text-sm text-ink-muted sm:grid-cols-3">
             <li className="rounded-xl border border-line bg-canvas p-4">
               <span className="text-[11px] uppercase tracking-[0.14em] text-ink-soft">
-                Trigger automático
+                Automatic trigger
               </span>
               <p className="mt-1.5 text-ink">
-                Si un insumo crítico pasa a <strong>escaso</strong>,{" "}
-                <strong>agotado</strong> o <strong>descontinuado</strong>, se
-                abre una alerta única por insumo.
+                If a critical supply becomes <strong>scarce</strong>,{" "}
+                <strong>exhausted</strong>, or <strong>discontinued</strong>, a
+                single alert is opened for that supply.
               </p>
             </li>
             <li className="rounded-xl border border-line bg-canvas p-4">
               <span className="text-[11px] uppercase tracking-[0.14em] text-ink-soft">
-                Compras
+                Purchasing
               </span>
               <p className="mt-1.5 text-ink">
-                Las líneas de OC con insumos críticos se marcan como{" "}
-                <strong>prioritarias</strong> automáticamente al insertarse o
-                actualizarse.
+                Purchase-order lines with critical supplies are marked as{" "}
+                <strong>priority</strong> automatically when inserted or updated.
               </p>
             </li>
             <li className="rounded-xl border border-line bg-canvas p-4">
               <span className="text-[11px] uppercase tracking-[0.14em] text-ink-soft">
-                Cierre
+                Resolution
               </span>
               <p className="mt-1.5 text-ink">
-                Cuando la disponibilidad vuelve a <strong>disponible</strong>,
-                la alerta se cierra y se marca <strong>resuelta</strong>.
+                When availability returns to <strong>available</strong>, the
+                alert is closed and marked <strong>resolved</strong>.
               </p>
             </li>
           </ul>
@@ -364,16 +382,16 @@ function AgentRunStatusBadge({ status }: { status: string | null }) {
 
   const label =
     status === "completed"
-      ? "Completado"
+      ? "Completed"
       : status === "partial"
-        ? "Parcial"
+        ? "Partial"
         : status === "failed"
-          ? "Fallido"
-          : "Sin estado";
+          ? "Failed"
+          : "No status";
 
   return (
     <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${tone}`}>
-      Corrida {label}
+      Run {label}
     </span>
   );
 }
@@ -385,4 +403,135 @@ function MetricCell({ label, value }: { label: string; value: string }) {
       <p className="mt-1 font-mono text-sm text-ink">{value}</p>
     </div>
   );
+}
+
+function buildCatalogRows(
+  alerts: Array<{
+    alert_id: string;
+    nombre: string;
+    tipo: string;
+    disponibilidad: string;
+    exposicion: number;
+  }>,
+  topCriticalSupplies: Array<{
+    id: string;
+    nombre: string;
+    tipo: string;
+    unidad_medida: string;
+    precio_referencia: number;
+    precio_actual: number;
+    variacion_precio_pct: number;
+    fecha_precio_actualizacion: string | null;
+    disponibilidad: "disponible" | "escaso" | "agotado" | "descontinuado";
+    exposicion_presupuestal: number;
+    cantidad_planeada_total: number;
+    cantidad_ejecutada_total: number;
+    ordenes_pendientes: number;
+    proyectos_impactados: number;
+  }>,
+): DemoCatalogRow[] {
+  const rows = new Map<string, DemoCatalogRow>();
+
+  for (const alert of alerts.slice(0, 6)) {
+    rows.set(`alert:${alert.alert_id}`, {
+      id: `alert:${alert.alert_id}`,
+      nombre: alert.nombre,
+      tipo: alert.tipo,
+      unidad_medida: "lot",
+      precio_referencia: 0,
+      precio_actual: 0,
+      variacion_precio_pct: 0,
+      fecha_precio_actualizacion: null,
+      disponibilidad: normalizeAvailability(alert.disponibilidad),
+      es_critico: true,
+      exposicion_presupuestal: alert.exposicion,
+      cantidad_planeada_total: 0,
+      cantidad_ejecutada_total: 0,
+      ordenes_pendientes: 0,
+      proyectos_impactados: 1,
+    });
+  }
+
+  for (const supply of topCriticalSupplies) {
+    rows.set(`supply:${supply.id}`, {
+      ...supply,
+      id: `supply:${supply.id}`,
+      es_critico: true,
+    });
+  }
+
+  return Array.from(rows.values());
+}
+
+function normalizeAvailability(value: string): "disponible" | "escaso" | "agotado" | "descontinuado" {
+  switch (value) {
+    case "agotado":
+    case "descontinuado":
+    case "escaso":
+      return value;
+    default:
+      return "escaso";
+  }
+}
+
+function translateDemoSupplyName(name: string, locale: string): string {
+  if (!locale.toLowerCase().startsWith("en")) return name;
+  const normalized = name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
+
+  const exactMap: Record<string, string> = {
+    "HABITACIONES Y PASILLOS": "ROOMS AND CORRIDORS",
+    "ELEMENTOS ARQUITECTONICOS": "ARCHITECTURAL ELEMENTS",
+    "INSTALACIONES ELECTRICAS": "ELECTRICAL INSTALLATIONS",
+    "ILUMINACION": "LIGHTING",
+    "CARPINTERIA METALICA - ALUMINIO - PVC - VIDRIO - INOX": "METAL CARPENTRY - ALUMINUM - PVC - GLASS - STAINLESS",
+    "FANCOIL HIDRONICO TIPO PARED LUJO MARCA YORK A 220V DE 12.000BTU INCLUYE VALVULA DE 3 VIAS MODELO YHGW04CDT-M-RX":
+      "HYDRONIC WALL FAN COIL YORK 220V 12,000 BTU WITH 3-WAY VALVE MODEL YHGW04CDT-M-RX",
+  };
+
+  if (exactMap[normalized]) return exactMap[normalized];
+
+  const prefixMap: Array<[string, string]> = [
+    [
+      "S/I CIELO RASO EN LAMINA FIBROCEMENTO",
+      "Drywall ceiling in fiber cement board 6 mm. Includes structure and first-coat paint. Floors 5 and 4.",
+    ],
+    [
+      "S/I TABLERO ELECTRICO BIFASICO",
+      "Two-phase electrical panel for 12 circuits with space for totalizer. Includes breakers and accessories.",
+    ],
+    [
+      "S/I DIVISION PARA BANO EN VIDRIO TEMPLADO",
+      "Tempered glass bathroom partition E:8 mm. Includes door leaf, fixed panel, and hardware.",
+    ],
+    [
+      "S/I PARCIAL DESDE TABLEROS DE DISTRIBUCION DE PISO 5 HASTA TABLEROS DE HABITACIONES",
+      "Partial run from floor 5 distribution panels to room panels. Includes wiring and conduit.",
+    ],
+    [
+      "S/I PARCIAL DESDE TABLERO PRINCIPAL DE PISO 5 HASTA TABLEROS DE DISTRIBUCION DE TORRES A Y B",
+      "Partial run from floor 5 main panel to Towers A and B distribution panels. Includes wiring.",
+    ],
+    [
+      "S/I TABLERO ELECTRICO TRIFASICO",
+      "Three-phase electrical panel for 24 circuits with space for totalizer. Includes breakers and accessories.",
+    ],
+    [
+      "S/I PORCELANATO REF. CELLER IN&OUT",
+      "Porcelain tile ref. Celler in&out, 60x60 cm, white, Alfa brand, for rooms and bathroom areas.",
+    ],
+    [
+      "S/I ESTUCO Y PINTURA CIELO RASOS Y TECHOS 3MANOS",
+      "Stucco and paint for ceilings and roof slabs, 3 coats, including linear details and technical rooms.",
+    ],
+  ];
+
+  for (const [prefix, translation] of prefixMap) {
+    if (normalized.startsWith(prefix)) return translation;
+  }
+
+  return name;
 }
