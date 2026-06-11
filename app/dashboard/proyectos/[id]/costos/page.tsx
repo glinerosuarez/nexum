@@ -29,13 +29,13 @@ export default async function CostosPage({ params }: CostosPageProps) {
     <>
       <Topbar
         title="Costos"
-        subtitle="Presupuesto APU, gasto ejecutado, órdenes prioritarias y nómina del proyecto."
+        subtitle="Presupuesto UPA, gasto ejecutado, órdenes prioritarias y nómina del proyecto."
       />
 
       <div className="space-y-8 px-5 py-8 sm:px-8">
         <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KPICard
-            label="Presupuesto total APU"
+            label="Presupuesto total UPA"
             value={fmtCOP(presupuesto)}
             hint="Cantidad planeada × precio unitario"
             icon={Wallet}
@@ -72,12 +72,12 @@ export default async function CostosPage({ params }: CostosPageProps) {
                 Presupuesto vs ejecutado por fase
               </h2>
               <p className="mt-0.5 text-xs text-ink-soft">
-                Aproximación: ejecutado = cantidad ejecutada × precio unitario APU.
+                Aproximación: ejecutado = cantidad ejecutada × precio unitario UPA.
               </p>
             </header>
             {budgetByPhase.length === 0 ? (
               <p className="px-5 py-10 text-center text-sm text-ink-muted">
-                Aún no hay fases con APU cargado.
+                Aún no hay fases con UPA cargado.
               </p>
             ) : (
               <ul className="divide-y divide-line">

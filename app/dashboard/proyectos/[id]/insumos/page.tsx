@@ -53,7 +53,7 @@ export default async function InsumosPage({ params }: InsumosPageProps) {
           <SummaryTile
             label="Exposición presupuestal crítica"
             value={fmtCOP(exposicionCritica)}
-            hint="Subtotal APU dependiente de insumos críticos"
+            hint="Subtotal UPA dependiente de insumos críticos"
           />
         </section>
 
@@ -229,7 +229,7 @@ export default async function InsumosPage({ params }: InsumosPageProps) {
                         <p className="text-[11px] text-ink-soft">
                           {s.cantidad_planeada_total > 0
                             ? `${consumo.toFixed(0)}% ejecutado`
-                            : "Sin APU"}
+                            : "Sin UPA"}
                         </p>
                       </td>
                       <td className="px-5 py-4 text-right font-mono text-ink">
