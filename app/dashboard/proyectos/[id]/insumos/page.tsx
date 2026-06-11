@@ -5,6 +5,7 @@ import {
   CriticalityBadge,
   SupplyTypeBadge,
 } from "@/components/dashboard/SupplyBadges";
+import { getDisplayAgentCounts } from "@/lib/agent-snapshot";
 import { getAgentOverrunSnapshot, getAllSupplies } from "@/lib/dashboard-data";
 import { fmtCOP, fmtCOPCompact, fmtDate, fmtNumber, fmtPercent } from "@/lib/format";
 
@@ -26,6 +27,7 @@ export default async function InsumosPage({ params }: InsumosPageProps) {
     (acc, s) => acc + s.exposicion_presupuestal,
     0,
   );
+  const displayCounts = getDisplayAgentCounts(agentSnapshot);
   const desviacion = getDesviacion(agentSnapshot);
 
   return (
@@ -91,11 +93,11 @@ export default async function InsumosPage({ params }: InsumosPageProps) {
                 />
                 <MetricCell
                   label="Puntos forecast"
-                  value={fmtNumber(agentSnapshot.forecast_points_written, { decimals: 0 })}
+                  value={fmtNumber(displayCounts.forecastPointsWritten, { decimals: 0 })}
                 />
                 <MetricCell
                   label="Alertas disparadas"
-                  value={fmtNumber(agentSnapshot.alerts_triggered, { decimals: 0 })}
+                  value={fmtNumber(displayCounts.alertsTriggered, { decimals: 0 })}
                 />
               </dl>
 
@@ -113,12 +115,6 @@ export default async function InsumosPage({ params }: InsumosPageProps) {
                   value={`${fmtSignedCOP(desviacion.amount)} · ${fmtSignedPercent(desviacion.pct)}`}
                 />
               </div>
-
-              {agentSnapshot.error_summary ? (
-                <p className="rounded-xl border border-status-warn/30 bg-status-warn/10 px-3 py-2 text-xs text-status-warn">
-                  Último error: {agentSnapshot.error_summary}
-                </p>
-              ) : null}
             </div>
           )}
         </section>

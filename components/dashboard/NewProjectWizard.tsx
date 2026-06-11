@@ -448,11 +448,11 @@ function DetectionBanner({
                     </span>
                     <span className="truncate font-mono">{f.filename}</span>
                   </span>
-                  <span className="text-ink-soft">
-                    {f.contributed.length > 0
-                      ? `${t.wizard.provides}: ${f.contributed.join(", ")}`
-                      : t.wizard.noContribution}
-                  </span>
+                  {f.contributed.length > 0 ? (
+                    <span className="text-ink-soft">
+                      {`${t.wizard.provides}: ${f.contributed.join(", ")}`}
+                    </span>
+                  ) : null}
                 </li>
               ))}
             </ul>

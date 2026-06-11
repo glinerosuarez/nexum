@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Bot, CheckCircle2, Loader2, TriangleAlert } from "lucide-react";
+import { Bot, CheckCircle2, Loader2 } from "lucide-react";
+import { getDisplayAgentCounts } from "@/lib/agent-snapshot";
 import { useTranslation } from "@/lib/i18n/client";
 import { fmtCOP, fmtDate, fmtNumber, fmtPercent } from "@/lib/format";
 
@@ -136,6 +137,7 @@ export function AgentRunFlow({
   }, [projectId, shouldAutoRun]);
 
   const snapshot = state.snapshot;
+  const displayCounts = getDisplayAgentCounts(snapshot);
   const desviacion = getDesviacion(snapshot);
   const runLabel = !snapshot?.last_run_status
     ? t.agent.noRun
@@ -199,8 +201,8 @@ export function AgentRunFlow({
         <MetricCell label={t.agent.suppliesTargeted} value={fmtNumber(snapshot?.supplies_targeted, { decimals: 0 })} />
         <MetricCell label={t.agent.scrapeOk} value={fmtNumber(snapshot?.supplies_scraped_ok, { decimals: 0 })} />
         <MetricCell label={t.agent.scrapeFailed} value={fmtNumber(snapshot?.supplies_scraped_failed, { decimals: 0 })} />
-        <MetricCell label={t.agent.forecastPoints} value={fmtNumber(snapshot?.forecast_points_written, { decimals: 0 })} />
-        <MetricCell label={t.agent.alertsTriggered} value={fmtNumber(snapshot?.alerts_triggered, { decimals: 0 })} />
+        <MetricCell label={t.agent.forecastPoints} value={fmtNumber(displayCounts.forecastPointsWritten, { decimals: 0 })} />
+        <MetricCell label={t.agent.alertsTriggered} value={fmtNumber(displayCounts.alertsTriggered, { decimals: 0 })} />
       </dl>
 
       <div className="grid gap-3 sm:grid-cols-3">
@@ -211,13 +213,6 @@ export function AgentRunFlow({
           value={`${fmtSignedCOP(desviacion.amount)} · ${fmtSignedPercent(desviacion.pct)}`}
         />
       </div>
-
-      {snapshot?.error_summary ? (
-        <p className="inline-flex items-center gap-2 rounded-xl border border-status-warn/30 bg-status-warn/10 px-3 py-2 text-xs text-status-warn">
-          <TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />
-          {t.agent.lastError}: {snapshot.error_summary}
-        </p>
-      ) : null}
 
       <div className="flex justify-end border-t border-line pt-4">
         <Link
