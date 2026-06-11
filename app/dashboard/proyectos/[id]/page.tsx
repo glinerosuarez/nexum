@@ -337,8 +337,8 @@ export default async function ProjectDashboard({
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-medium text-ink">{a.nombre}</p>
-                        <AvailabilityBadge value={a.disponibilidad} />
-                        <SupplyTypeBadge type={a.tipo} />
+                        <AvailabilityBadge value={a.disponibilidad} locale={t.locale} />
+                        <SupplyTypeBadge type={a.tipo} locale={t.locale} />
                       </div>
                       <p className="mt-1 text-xs text-ink-muted">{a.mensaje}</p>
                       <p className="mt-1 text-[11px] text-ink-soft">
@@ -413,7 +413,7 @@ export default async function ProjectDashboard({
                             style={{ width: `${Math.min(pct, 100)}%` }}
                           />
                         </div>
-                        <AvailabilityBadge value={s.disponibilidad} />
+                        <AvailabilityBadge value={s.disponibilidad} locale={t.locale} />
                       </div>
                     </li>
                   );

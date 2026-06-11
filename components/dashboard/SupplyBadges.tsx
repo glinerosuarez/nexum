@@ -1,9 +1,37 @@
 interface AvailabilityBadgeProps {
   value: "disponible" | "escaso" | "agotado" | "descontinuado" | string;
+  locale?: string;
 }
 
-export function AvailabilityBadge({ value }: AvailabilityBadgeProps) {
-  const map: Record<string, { label: string; classes: string; dot: string }> = {
+function isEnglishLocale(locale?: string): boolean {
+  return (locale ?? "").toLowerCase().startsWith("en");
+}
+
+export function AvailabilityBadge({ value, locale }: AvailabilityBadgeProps) {
+  const map: Record<string, { label: string; classes: string; dot: string }> = isEnglishLocale(locale)
+    ? {
+        disponible: {
+          label: "Available",
+          classes: "bg-status-ok/10 text-status-ok",
+          dot: "bg-status-ok",
+        },
+        escaso: {
+          label: "Scarce",
+          classes: "bg-status-warn/10 text-status-warn",
+          dot: "bg-status-warn",
+        },
+        agotado: {
+          label: "Out of stock",
+          classes: "bg-status-risk/10 text-status-risk",
+          dot: "bg-status-risk",
+        },
+        descontinuado: {
+          label: "Discontinued",
+          classes: "bg-ink/10 text-ink",
+          dot: "bg-ink",
+        },
+      }
+    : {
     disponible: {
       label: "Disponible",
       classes: "bg-status-ok/10 text-status-ok",
@@ -24,7 +52,7 @@ export function AvailabilityBadge({ value }: AvailabilityBadgeProps) {
       classes: "bg-ink/10 text-ink",
       dot: "bg-ink",
     },
-  };
+      };
   const meta = map[value] ?? {
     label: value,
     classes: "bg-ink/5 text-ink",
@@ -63,15 +91,23 @@ export function CriticalityBadge({ critical }: CriticalityBadgeProps) {
 
 interface SupplyTypeBadgeProps {
   type: string;
+  locale?: string;
 }
 
-export function SupplyTypeBadge({ type }: SupplyTypeBadgeProps) {
-  const labels: Record<string, string> = {
-    material: "Material",
-    equipo: "Equipo",
-    mano_obra: "Mano de obra",
-    subcontrato: "Subcontrato",
-  };
+export function SupplyTypeBadge({ type, locale }: SupplyTypeBadgeProps) {
+  const labels: Record<string, string> = isEnglishLocale(locale)
+    ? {
+        material: "Material",
+        equipo: "Equipment",
+        mano_obra: "Labor",
+        subcontrato: "Subcontract",
+      }
+    : {
+        material: "Material",
+        equipo: "Equipo",
+        mano_obra: "Mano de obra",
+        subcontrato: "Subcontrato",
+      };
   return (
     <span className="inline-flex items-center rounded-full border border-line bg-canvas px-2.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-ink-muted">
       {labels[type] ?? type}
