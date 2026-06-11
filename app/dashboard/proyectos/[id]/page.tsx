@@ -85,6 +85,7 @@ export default async function ProjectDashboard({
         }
       : null,
   ].filter(Boolean) as Array<{ label: string; value: string; hint: string }>;
+  const visibleAlerts = alerts.slice(0, 6);
   const executiveCards = [
     <KPICard
       key="budget"
@@ -374,7 +375,7 @@ export default async function ProjectDashboard({
               </Link>
             </header>
 
-            {alerts.length === 0 ? (
+            {visibleAlerts.length === 0 ? (
               <div className="px-5 py-10 text-center text-sm text-ink-muted">
                 <CircleAlert
                   aria-hidden="true"
@@ -384,7 +385,7 @@ export default async function ProjectDashboard({
               </div>
             ) : (
               <ul className="divide-y divide-line">
-                {alerts.map((a) => (
+                {visibleAlerts.map((a) => (
                   <li key={a.alert_id} className="flex items-start gap-4 px-5 py-4">
                     <span
                       aria-hidden="true"
@@ -556,6 +557,8 @@ function translateStubAlertName(name: string, locale: string): string {
     "INSTALACIONES ELECTRICAS": "ELECTRICAL INSTALLATIONS",
     "ILUMINACION": "LIGHTING",
     "CARPINTERIA METALICA - ALUMINIO - PVC - VIDRIO - INOX": "METAL CARPENTRY - ALUMINUM - PVC - GLASS - STAINLESS",
+    "FANCOIL HIDRONICO TIPO PARED LUJO MARCA YORK A 220V DE 12.000BTU INCLUYE VALVULA DE 3 VIAS MODELO YHGW04CDT-M-RX":
+      "HYDRONIC WALL FAN COIL YORK 220V 12,000 BTU WITH 3-WAY VALVE MODEL YHGW04CDT-M-RX",
   };
 
   return exactMap[normalized] ?? name;
