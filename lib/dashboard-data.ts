@@ -1,5 +1,8 @@
 import { buildProjectionCurve, type CurveData } from "@/lib/curve";
-import { nexumApiRequest } from "@/lib/nexum-api/client";
+import {
+  isUnauthorizedProjectAccessError,
+  nexumApiRequest,
+} from "@/lib/nexum-api/client";
 
 export interface ProjectSummary {
   id: string;
@@ -338,8 +341,15 @@ export async function listProjects(): Promise<ProjectListRow[]> {
 
 export async function getProjectBasic(projectId: string): Promise<ProjectBasic | null> {
   const path = `/projects/${encodeURIComponent(projectId)}/basic`;
-  const payload = await nexumApiRequest<{ project: ProjectBasic | null }>(path);
-  return payload.project;
+  try {
+    const payload = await nexumApiRequest<{ project: ProjectBasic | null }>(path);
+    return payload.project;
+  } catch (error) {
+    if (isUnauthorizedProjectAccessError(error)) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 export async function getSupplySelectionInputs(
