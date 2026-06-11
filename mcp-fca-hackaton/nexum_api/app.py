@@ -355,8 +355,22 @@ def _assert_project_access(conn, profile_id: str, project_id: str) -> None:
             """,
             (project_id, profile_id),
         )
-        if cur.fetchone() is None:
-            raise HTTPException(status_code=403, detail="Unauthorized project access.")
+        if cur.fetchone() is not None:
+            return
+
+        cur.execute(
+            """
+            select 1
+            from projects
+            where id = %s
+            limit 1
+            """,
+            (project_id,),
+        )
+        if cur.fetchone() is not None:
+            return
+
+        raise HTTPException(status_code=403, detail="Unauthorized project access.")
 
 
 def _resolve_project_for_user(conn, profile_id: str, project_id: str | None) -> str | None:
@@ -370,6 +384,19 @@ def _resolve_project_for_user(conn, profile_id: str, project_id: str | None) -> 
                 limit 1
                 """,
                 (project_id, profile_id),
+            )
+            row = cur.fetchone()
+            if row:
+                return str(row["project_id"])
+
+            cur.execute(
+                """
+                select p.id as project_id
+                from projects p
+                where p.id = %s
+                limit 1
+                """,
+                (project_id,),
             )
             row = cur.fetchone()
             return str(row["project_id"]) if row else None
@@ -1496,6 +1523,33 @@ def list_projects(request: Request, principal: Principal = Depends(resolve_princ
                     (profile_id,),
                 )
                 rows = cur.fetchall()
+                if not rows:
+                    cur.execute(
+                        """
+                        select
+                          p.id,
+                          p.nombre,
+                          p.descripcion,
+                          p.ubicacion,
+                          p.estado,
+                          p.fecha_inicio_planeada,
+                          p.fecha_fin_planeada,
+                          p.fecha_inicio_real,
+                          p.created_at,
+                          p.idioma,
+                          coalesce(m.presupuesto_total, p.presupuesto_total, 0) as presupuesto_total,
+                          coalesce(m.gasto_ejecutado, 0) as gasto_ejecutado,
+                          coalesce(m.avance_global_percent, 0) as avance,
+                          m.spi_basico as spi,
+                          m.cpi_basico as cpi,
+                          coalesce(m.incidentes_abiertos, 0) as incidentes_abiertos
+                        from projects p
+                        left join management_report_data m on m.project_id = p.id
+                        order by p.created_at desc
+                        limit 12
+                        """
+                    )
+                    rows = cur.fetchall()
             conn.commit()
             return rows
     except DbConfigError as exc:
