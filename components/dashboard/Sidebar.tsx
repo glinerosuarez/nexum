@@ -8,7 +8,6 @@ import {
   MessageSquare,
   PackageSearch,
   Plus,
-  Wallet,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -58,12 +57,6 @@ export function Sidebar() {
           label: t.sidebar.criticalSupplies,
           icon: PackageSearch,
           description: t.sidebar.catalogAndAvailability,
-        },
-        {
-          href: `/dashboard/proyectos/${currentProjectId}/costos`,
-          label: t.sidebar.costs,
-          icon: Wallet,
-          description: t.sidebar.budgetAndSpend,
         },
         {
           href: `/dashboard/proyectos/${currentProjectId}/chat`,

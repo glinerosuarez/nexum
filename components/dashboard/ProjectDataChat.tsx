@@ -51,14 +51,14 @@ export function ProjectDataChat({ projectId }: { projectId: string }) {
         };
         if (!alive) return;
         if (!payload.ok) {
-          setError(payload.detail ?? "No pudimos cargar el historial.");
+          setError(payload.detail ?? "We couldn't load the conversation history.");
           return;
         }
         setSession(payload.session ?? null);
         setMessages(payload.messages ?? []);
       } catch (err) {
         if (!alive || controller.signal.aborted) return;
-        setError(err instanceof Error ? err.message : "No pudimos cargar el historial.");
+        setError(err instanceof Error ? err.message : "We couldn't load the conversation history.");
       } finally {
         if (alive) setLoadingHistory(false);
       }
@@ -114,7 +114,7 @@ export function ProjectDataChat({ projectId }: { projectId: string }) {
       };
 
       if (!payload.ok) {
-        setError(payload.detail ?? "No pudimos obtener respuesta del chat.");
+        setError(payload.detail ?? "We couldn't get a response from the chat.");
         setMessages((prev) => prev.filter((m) => m.id !== optimisticUser.id));
         setInput(trimmed);
         return;
@@ -134,7 +134,7 @@ export function ProjectDataChat({ projectId }: { projectId: string }) {
         return next;
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No pudimos obtener respuesta del chat.");
+      setError(err instanceof Error ? err.message : "We couldn't get a response from the chat.");
       setMessages((prev) => prev.filter((m) => m.id !== optimisticUser.id));
       setInput(trimmed);
     } finally {
@@ -154,9 +154,9 @@ export function ProjectDataChat({ projectId }: { projectId: string }) {
     <section className="rounded-2xl border border-line bg-canvas-raised">
       <header className="flex items-center justify-between gap-3 border-b border-line px-5 py-4">
         <div>
-          <h2 className="font-display text-xl text-ink">Chat con tus datos</h2>
+          <h2 className="font-display text-xl text-ink">Chat with your data</h2>
           <p className="mt-0.5 text-xs text-ink-soft">
-            Pregunta por costos, avance, forecast y riesgo de insumos del proyecto.
+            Ask about costs, progress, forecast, and critical supply risk for this project.
           </p>
         </div>
         <button
@@ -165,7 +165,7 @@ export function ProjectDataChat({ projectId }: { projectId: string }) {
           className="inline-flex items-center gap-1 rounded-full border border-line bg-canvas px-3 py-1.5 text-xs text-ink-soft hover:text-ink"
         >
           <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
-          Limpiar
+          Clear
         </button>
       </header>
 
@@ -173,13 +173,13 @@ export function ProjectDataChat({ projectId }: { projectId: string }) {
         {loadingHistory ? (
           <div className="flex min-h-48 items-center justify-center text-sm text-ink-soft">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-            Cargando historial...
+            Loading history...
           </div>
         ) : messages.length === 0 ? (
           <div className="rounded-xl border border-dashed border-line bg-canvas px-4 py-10 text-center text-sm text-ink-soft">
             <MessageSquareText className="mx-auto mb-3 h-6 w-6 text-ink-soft" aria-hidden="true" />
-            Empieza preguntando algo como:{" "}
-            <span className="text-ink">"¿Cuál es el sobrecosto proyectado del proyecto?"</span>
+            Start by asking something like:{" "}
+            <span className="text-ink">"What is the projected overrun for this project?"</span>
           </div>
         ) : (
           <ul className="max-h-[52vh] space-y-3 overflow-y-auto pr-1">
@@ -223,7 +223,7 @@ export function ProjectDataChat({ projectId }: { projectId: string }) {
       <form onSubmit={handleSubmit} className="border-t border-line px-5 py-4">
         <div className="flex items-end gap-3">
           <label className="sr-only" htmlFor="chat_input">
-            Mensaje
+            Message
           </label>
           <textarea
             id="chat_input"
@@ -231,14 +231,14 @@ export function ProjectDataChat({ projectId }: { projectId: string }) {
             onChange={(e) => setInput(e.target.value)}
             rows={3}
             maxLength={3000}
-            placeholder="Escribe tu pregunta sobre este proyecto..."
+            placeholder="Ask a question about this project..."
             className="min-h-[84px] w-full resize-y rounded-xl border border-line bg-canvas px-3 py-2.5 text-sm text-ink outline-none placeholder:text-ink-soft focus:border-ink/40 focus:ring-2 focus:ring-accent/25"
           />
           <button
             type="submit"
             disabled={!canSend}
             className="inline-flex h-11 min-w-11 items-center justify-center rounded-full bg-ink px-4 text-canvas transition-colors hover:bg-[#1a1a1c] disabled:cursor-not-allowed disabled:opacity-50"
-            aria-label="Enviar mensaje"
+            aria-label="Send message"
           >
             {sending ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />

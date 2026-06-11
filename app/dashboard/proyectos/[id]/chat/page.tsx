@@ -16,8 +16,8 @@ export default async function ProjectChatPage({ params }: ProjectChatPageProps) 
   return (
     <>
       <Topbar
-        title="Chat con tus datos"
-        subtitle={`Proyecto: ${project?.nombre ?? "Sin nombre"}`}
+        title="Chat with your data"
+        subtitle={`Project: ${project?.nombre ?? "Untitled"}`}
       />
       <div className="space-y-6 px-5 py-8 sm:px-8">
         <ProjectDataChat projectId={projectId} />
