@@ -38,6 +38,27 @@ interface ChatPostResponse {
   detail?: string;
 }
 
+function translateDeterministicChatContent(content: string): string {
+  let next = content;
+  next = next.replace(/^Resumen rápido de /, "Quick summary of ");
+  next = next.replace(/^- Presupuesto:/m, "- Budget:");
+  next = next.replace(/^- Gasto ejecutado:/m, "- Executed spend:");
+  next = next.replace(/^- Avance global:/m, "- Overall progress:");
+  next = next.replace(
+    /Pregunta adicional sugerida: ¿quieres que detalle riesgos por fase o por insumo\?/,
+    "Suggested follow-up: would you like me to break down risks by phase or by supply?",
+  );
+  return next;
+}
+
+function translateChatMessage(message: ChatMessage): ChatMessage {
+  if (message.role !== "assistant") return message;
+  return {
+    ...message,
+    content: translateDeterministicChatContent(message.content),
+  };
+}
+
 export async function GET(
   req: Request,
   context: { params: Promise<{ id: string }> },
@@ -58,7 +79,10 @@ export async function GET(
       },
     );
 
-    return NextResponse.json(payload);
+    return NextResponse.json({
+      ...payload,
+      messages: (payload.messages ?? []).map(translateChatMessage),
+    });
   } catch (error) {
     return NextResponse.json(
       {
@@ -97,7 +121,13 @@ export async function POST(
       },
     });
 
-    return NextResponse.json(payload);
+    return NextResponse.json({
+      ...payload,
+      messages: (payload.messages ?? []).map(translateChatMessage),
+      assistant_message: payload.assistant_message
+        ? translateChatMessage(payload.assistant_message)
+        : undefined,
+    });
   } catch (error) {
     return NextResponse.json(
       {
